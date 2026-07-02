@@ -5,24 +5,42 @@
 A text-to-SQL agent runs in "production" against the [Spider](https://yale-lily.github.io/spider)
 benchmark. When its accuracy **drifts** as queries get harder, the system detects the
 degradation, makes the agent **learn from its own failures** — a teacher model turns the
-agent's mistakes into few-shot examples — and the agent **recovers on questions it has never
-seen**. No human in the loop. The detection-and-recovery pattern here — windowed drift detection 
-over a telemetry stream, severity scoring, automated response — is a general infrastructure spine: 
-the agent is just the system under observation, and the same shape applies to monitoring any drifting 
-stream, from API behavior to physical-system telemetry.
+agent's mistakes into few-shot examples and knowledge-graph rules — and the agent **recovers
+on questions it has never seen**. No human in the loop. The detection-and-recovery pattern here —
+windowed drift detection over a telemetry stream, severity scoring, automated response — is a
+general infrastructure spine: the agent is just the system under observation, and the same shape
+applies to monitoring any drifting stream, from API behavior to physical-system telemetry.
 
-> Built for **The Self-Improvement Stack** track at the AI Engineer World's Fair Hackathon.
-> **Every commit in this repository was written during the event (June 27, 2026).** No
-> pre-existing project code is included. The text-to-SQL agent is throwaway scaffolding —
-> the detection + learning loop is the build.
+> Started at **The Self-Improvement Stack** track of the AI Engineer World's Fair Hackathon
+> (June 2026) and extended since: local open-source student support, knowledge-graph correction
+> memory, and enriched failure harvesting were added post-event.
 
 ---
 
 ## Results
 
-The agent learned from its own failures and **nearly doubled its accuracy on hard queries it
-had never seen as examples** — same questions, same difficulty, no human in the loop and no
-model swap:
+### Local open-source student (Qwen2.5-1.5B via Ollama) + cloud teacher
+
+The flagship configuration: a **1.5B-parameter student runs locally and free** on the hot path;
+the frontier teacher (MiniMax-M3) is called only when drift fires. The student **more than
+tripled its accuracy on hard held-out queries** it had never seen as examples:
+
+| Hard-bucket execution accuracy (same 30 held-out questions, same eval) | Accuracy |
+|---|---|
+| Student (Qwen2.5-1.5B) — no examples | 0.100 |
+| **Student after self-correction — 24 teacher-repaired failures as examples** | **0.333** |
+| **Improvement** | **+0.233** |
+
+The extra-hard bucket improved too (0.091 → 0.273), and recovery was broad across schemas —
+not one lucky database.
+
+**A dose-response finding along the way:** injecting only the drift event's 8 capped
+(and partially duplicated) failing cases recovered **+0.000**; harvesting the full degraded
+window — 24 deduplicated failures, round-robined so every schema gets coverage — recovered
+**+0.233**. The correction dose that heals a 40B-class model is too dilute for a 1.5B one.
+That diagnosis came entirely from the event log the system writes about itself.
+
+### Original hackathon configuration (MiniMax M2.7 student)
 
 | Hard-bucket execution accuracy (same 30 held-out questions, same eval) | Accuracy |
 |---|---|
@@ -120,11 +138,24 @@ learn from. Transient API outages are filtered out so they can't fire false drif
 
 **3. Correction makes the agent learn from its failures** ([`correction/learner.py`](correction/learner.py)).
 
-For each failing case: a stronger **teacher model** generates corrected SQL, which is then
-**execution-verified against the gold query** — if the teacher's SQL doesn't produce the right
-result set, it's discarded and the gold SQL is used instead. A few **anti-forgetting anchors**
-(easy successes) are kept so learning hard queries doesn't regress easy ones. The result is a
-`CorrectionAction` whose examples are injected back into `few_shot_examples`.
+On drift, the orchestrator harvests the **full degraded window** of failures — deduplicated by
+question and round-robined across database schemas so no schema is starved (capped at 24 to
+bound teacher calls). For each failing case: a stronger **teacher model** generates corrected
+SQL, which is then **execution-verified against the gold query** — if the teacher's SQL doesn't
+produce the right result set, it's discarded and the gold SQL is used instead. A few
+**anti-forgetting anchors** (easy successes) are kept so learning hard queries doesn't regress
+easy ones. The result is a `CorrectionAction` whose examples are injected back into
+`few_shot_examples`.
+
+**4. A knowledge graph remembers failure patterns across runs** ([`correction/graph.py`](correction/graph.py)).
+
+The same repaired failures are distilled into `(trap, fix)` rules attached to schema nodes —
+e.g. *"trap: unnecessary JOINs to unrelated tables → fix: join only the tables the question
+requires"*. Rules persist in `correction/graph_store.json` and are spliced into the agent's
+prompt on future same-schema questions ("Known corrections for this schema"). Rules that recur
+across ≥2 databases get promoted to global scope. Toggle injection with `AGENT_USE_RULES=0` —
+useful because small students can be confused by abstract rule text (examples are the
+empirically stronger channel at 1.5B scale).
 
 ---
 
@@ -137,7 +168,12 @@ pip install -e .          # or: pip install -r requirements.txt
 # 2. Generate the mock fixtures (lets any stage run standalone)
 python fixtures/generate_mocks.py
 
-# 3. Set the model API key (base + teacher both use the MiniMax OpenAI-compatible API)
+# 3a. Local student (recommended — free, no key for the hot path):
+ollama pull qwen2.5:1.5b-instruct
+export AGENT_BASE_URL=http://localhost:11434/v1
+export AGENT_MODEL=qwen2.5:1.5b-instruct
+
+# 3b. Teacher key (only needed for the correction stage, fires on drift):
 export MINIMAX_API_KEY=sk-...
 ```
 
@@ -145,9 +181,10 @@ The Spider subset and SQLite databases are already checked in under
 [`fixtures/`](fixtures/). To rebuild them from a full Spider download, see
 [`fixtures/prepare_spider.py`](fixtures/prepare_spider.py).
 
-**Models** (override via env): base agent `MiniMax-M2.7-highspeed`, teacher
-`MiniMax-M3` (`TEACHER_MODEL`). The base tier is deliberately weak so it genuinely
-struggles on hard SQL.
+**Models** (all overridable via env): student defaults to `MiniMax-M2.7-highspeed`
+(`AGENT_MODEL` + `AGENT_BASE_URL` point it at any OpenAI-compatible server, e.g. Ollama);
+teacher `MiniMax-M3` (`TEACHER_MODEL`); rule distiller (`DISTILL_MODEL`). The student is
+deliberately weak so it genuinely struggles on hard SQL — that's the point.
 
 ---
 
@@ -229,7 +266,8 @@ offline without an API key.
 ## Tech stack
 
 Python · Pydantic (typed contracts) · SQLite + Spider EX metric (execution-based eval) ·
-MiniMax (OpenAI-compatible API) for base + teacher models · FastAPI + Chart.js (viewer).
+local open-source student via Ollama (any OpenAI-compatible server) · MiniMax teacher ·
+networkx knowledge graph (correction memory) · FastAPI + Chart.js (viewer).
 Local-only by design, but the architecture scales horizontally without redesign: stateless 
 stages behind frozen contracts, per-channel detectors, Ray fan-out for parallel training. 
 The same shape generalizes from one agent to hundreds of independent telemetry channels.
