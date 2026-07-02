@@ -11,6 +11,7 @@ data/spider/
 events.jsonl
 events.jsonl.bak*
 correction/graph_store.json
-fixtures/mock_*.jsonl
+# NOTE: fixtures/mock_*.jsonl are committed on purpose — detector tests pin
+# exact numbers to this data, and generate_mocks.py is not bit-reproducible.
 *.sqlite
 *.db

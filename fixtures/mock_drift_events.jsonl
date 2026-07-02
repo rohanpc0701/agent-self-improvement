@@ -1,0 +1,1 @@
+{"detected_at":1782980888.818645,"channel":"execution_accuracy","severity":0.45,"window_mean":0.4,"baseline_mean":0.9,"failure_mode":"valid_but_wrong","failing_run_ids":["run_0080","run_0081","run_0084","run_0085","run_0086","run_0087","run_0090","run_0093"]}

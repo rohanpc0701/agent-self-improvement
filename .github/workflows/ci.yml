@@ -19,7 +19,5 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Generate mock fixtures
-        run: python fixtures/generate_mocks.py
       - name: Run test suite (hermetic — no API keys needed)
         run: python -m pytest -q
