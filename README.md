@@ -1,5 +1,7 @@
 # Agent Self-Improvement
 
+[![CI](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml/badge.svg)](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml)
+
 **Drift detection and automated self-improvement for AI agents.**
 
 A text-to-SQL agent runs in "production" against the [Spider](https://yale-lily.github.io/spider)
