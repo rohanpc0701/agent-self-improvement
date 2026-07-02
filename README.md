@@ -161,6 +161,23 @@ empirically stronger channel at 1.5B scale).
 
 ---
 
+## Instant demo (no API key, no model download)
+
+A complete recorded run — drift, correction, recovery — ships in the repo. Replay it in the
+live viewer with nothing but Python installed:
+
+```bash
+pip install -r requirements.txt
+VIEWER_LOG=fixtures/demo_events.jsonl uvicorn viewer.app:app --port 8011
+# open http://127.0.0.1:8011
+```
+
+You'll see the accuracy curve crater at the change-point, the drift alarm fire, and the
+recovery climb after the teacher's examples are injected — the exact telemetry from the
+Qwen2.5-1.5B run in the results table above.
+
+---
+
 ## Quickstart
 
 ```bash
