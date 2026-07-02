@@ -42,6 +42,17 @@ window — 24 deduplicated failures, round-robined so every schema gets coverage
 **+0.233**. The correction dose that heals a 40B-class model is too dilute for a 1.5B one.
 That diagnosis came entirely from the event log the system writes about itself.
 
+**Knowledge-graph rules A/B (same run, same examples):**
+
+| Recovery channel (hard bucket) | Recovered accuracy | Δ vs base |
+|---|---|---|
+| Few-shot examples only (`AGENT_USE_RULES=0`) | **0.333** | **+0.233** |
+| Examples + KG rule text in prompt (`AGENT_USE_RULES=1`) | 0.300 | +0.200 |
+
+At 1.5B scale, abstract `(trap, fix)` rule text slightly *hurts* vs examples alone — the
+small student copies SQL patterns better than it follows prose corrections. The graph is
+still valuable as persistent memory and for larger models; toggle with `AGENT_USE_RULES`.
+
 ### Original hackathon configuration (MiniMax M2.7 student)
 
 | Hard-bucket execution accuracy (same 30 held-out questions, same eval) | Accuracy |
