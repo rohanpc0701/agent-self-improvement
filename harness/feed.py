@@ -142,3 +142,52 @@ def build_stream(
 
 def stream(items: list[FeedItem]) -> Iterator[FeedItem]:
     yield from items
+
+
+def build_continuous_stream(
+    questions: list[dict],
+    n_baseline: int = 40,
+    n_degraded: int = 50,
+    n_recovery: int = 50,
+    n_cycles: int = 3,
+    seed: int = 42,
+    same_db_split: bool = True,
+    db_heldout_frac: float = 0.4,
+    baseline_easy_only: bool = True,
+) -> list[FeedItem]:
+    """Multi-cycle stream: baseline warmup, then repeated degraded→recovery ramps.
+
+    Each cycle can trigger a new drift event and correction in --continuous mode.
+    Uses the same LEARN/HELD-OUT split as build_stream for all cycles.
+    """
+    rng = random.Random(seed)
+    baseline_difficulties = ("easy",) if baseline_easy_only else ("easy", "medium")
+    easy_med = [q for q in questions if q["difficulty"] in baseline_difficulties]
+    hard_extra = [q for q in questions if q["difficulty"] in ("hard", "extra")]
+
+    if not easy_med or not hard_extra:
+        raise ValueError("Need easy/medium and hard/extra questions — run prepare_spider.py")
+
+    if same_db_split:
+        learn_pool, heldout_pool = _split_hard_by_db(hard_extra, rng, heldout_frac=db_heldout_frac)
+    else:
+        learn_pool, heldout_pool = _split_hard(hard_extra, 0.5, rng)
+
+    def _pick(pool: list[dict], n: int, phase: str) -> list[FeedItem]:
+        return [
+            FeedItem(
+                question_id=q["id"],
+                question=q["question"],
+                gold_sql=q["expected_sql"],
+                db_id=q["db_id"],
+                difficulty=q["difficulty"],
+                phase=phase,
+            )
+            for q in rng.choices(pool, k=n)
+        ]
+
+    items = _pick(easy_med, n_baseline, "baseline")
+    for _ in range(n_cycles):
+        items += _pick(learn_pool, n_degraded, "degraded")
+        items += _pick(heldout_pool, n_recovery, "recovery")
+    return items

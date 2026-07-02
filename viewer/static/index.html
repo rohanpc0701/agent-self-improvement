@@ -75,6 +75,12 @@
       </div>
     </section>
 
+    <!-- CORRECTION TIMELINE -->
+    <section class="timeline" id="timeline-section" aria-label="Correction timeline" hidden>
+      <h2>Correction timeline</h2>
+      <ol class="timeline-list" id="timeline"></ol>
+    </section>
+
     <!-- SQL EXAMPLE PANEL: what the agent generated at this run -->
     <section class="example" aria-label="SQL example">
       <div class="ex-head">
@@ -90,8 +96,12 @@
       </div>
       <div class="ex-sql">
         <div class="sql-block">
-          <div class="sql-label">agent SQL</div>
+          <div class="sql-label">agent output</div>
           <pre id="ex-generated">&mdash;</pre>
+        </div>
+        <div class="sql-block what-changed" id="what-changed" hidden>
+          <div class="sql-label">what changed after correction</div>
+          <pre id="ex-injected">&mdash;</pre>
         </div>
       </div>
     </section>

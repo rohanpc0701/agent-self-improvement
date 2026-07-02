@@ -20,13 +20,11 @@ from typing import Optional
 
 from contracts.eventlog import DEFAULT_LOG, append_event
 from contracts.schemas import AgentConfig, DriftEvent, FewShotExample
-from correction.correction import handle as correction_handle
 from correction.learner import FailingCase
 from detector.config import DetectorConfig
 from detector.detector import Detector
-from harness.feed import FeedItem, build_stream
+from harness.feed import FeedItem
 from harness.runner import run_item, run_stream
-from harness.spider import load_questions
 
 # Student model. Override via env for a local open-source student, e.g.:
 #   export AGENT_BASE_URL=http://localhost:11434/v1
@@ -247,31 +245,24 @@ def significance_run(items: list[FeedItem]) -> None:
     _mcnemar_report("Overall (hard + extra)", all_pairs)
 
 
-def _build_feed(n: int, full: bool) -> list[FeedItem]:
-    """Load Spider questions and build the change-point stream.
+def _get_adapter(name: str = "spider"):
+    from adapters import get_adapter
+    return get_adapter(name)
 
-    Seed is fixed so --dry-run-heldout and the full live run always operate on
-    the identical LEARN / HELD-OUT split — the measurement and the demo are
-    the same experiment.
 
-    same_db_split=True: every HELD-OUT question has at least one same-DB question in
-    LEARN, so injected examples are schema-relevant rather than cross-schema noise.
+def _build_feed(n: int, full: bool, adapter_name: str = "spider") -> list[FeedItem]:
+    """Load questions and build the change-point stream via the task adapter."""
+    adapter = _get_adapter(adapter_name)
+    return adapter.build_feed(n, full, _SEED)
 
-    baseline_easy_only=True: the weak base fails ~50% of "medium" questions on these
-    complex schemas, so an easy+medium baseline is noisy enough to false-trigger drift
-    before the change-point. Easy-only gives a stable-high baseline (~0.77).
-    """
-    per_phase = 80 if full else n
-    questions = load_questions()
-    return build_stream(
-        questions,
-        n_baseline=per_phase,
-        n_degraded=per_phase,
-        n_recovery=per_phase,
-        seed=_SEED,
-        same_db_split=True,
-        baseline_easy_only=True,
-    )
+
+def _build_continuous_feed(
+    n_cycles: int = 2,
+    full: bool = False,
+    adapter_name: str = "spider",
+) -> list[FeedItem]:
+    adapter = _get_adapter(adapter_name)
+    return adapter.build_continuous_feed(n_cycles, full, _SEED)
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +376,42 @@ def dry_run_heldout(
 # ---------------------------------------------------------------------------
 # Step 5: two-pass live loop
 # ---------------------------------------------------------------------------
+
+def _run_item(
+    item: FeedItem,
+    config: AgentConfig,
+    adapter_name: str = "spider",
+    use_rules: bool = True,
+):
+    return _get_adapter(adapter_name).run_item(item, config, use_rules=use_rules)
+
+
+def _apply_correction(
+    adapter_name: str,
+    event: DriftEvent,
+    failing_cases: list[FailingCase],
+    anchor_cases: list[FailingCase],
+):
+    from contracts.schemas import CorrectionAction
+
+    adapter = _get_adapter(adapter_name)
+    examples = adapter.make_examples(failing_cases, anchor_cases)
+    n_teacher = sum(1 for e in examples if e.source == "teacher")
+    n_gold = sum(1 for e in examples if e.source == "gold")
+    n_anchor = sum(1 for e in examples if e.source == "anchor")
+    rationale = (
+        f"Drift on {event.channel}: window={event.window_mean:.3f}, "
+        f"baseline={event.baseline_mean:.3f}, severity={event.severity:.3f}. "
+        f"failure_mode={event.failure_mode.value}. "
+        f"Injecting {len(examples)} examples "
+        f"({n_teacher} teacher-verified, {n_gold} gold-fallback, {n_anchor} anchor)."
+    )
+    return CorrectionAction(
+        triggered_by=event.channel,
+        new_few_shot_examples=examples,
+        rationale=rationale,
+    )
+
 
 def _make_base_config(run_suffix: str = "v0") -> AgentConfig:
     return AgentConfig(
@@ -548,6 +575,7 @@ def _pass1(
     run_id_map: dict,
     baseline_items_out: list,
     baseline_recs_out: list,
+    adapter_name: str = "spider",
 ) -> DriftEvent | None:
     """Run baseline + degraded items, feed detector, return DriftEvent when fired."""
     drift_event: DriftEvent | None = None
@@ -557,7 +585,7 @@ def _pass1(
     print(f"\n[pass 1] {total} items (baseline + degraded) ...", flush=True)
 
     for i, item in enumerate(pass1_items, 1):
-        rec = run_item(item, base_config)
+        rec = _run_item(item, base_config, adapter_name)
         if rec is None:
             print(f"  [{i:>3}/{total}] [{item.phase:<9}] [{item.difficulty:<6}] SKIP", flush=True)
             continue
@@ -735,7 +763,11 @@ def probe_relevance(items: list[FeedItem]) -> None:
     print("=" * 60, flush=True)
 
 
-def run_full_loop(items: list[FeedItem], log_path: Path) -> None:
+def run_full_loop(
+    items: list[FeedItem],
+    log_path: Path,
+    adapter_name: str = "spider",
+) -> None:
     """Execute the full two-pass self-improvement loop."""
     base_config = _make_base_config()
     detector = Detector(DetectorConfig())
@@ -749,7 +781,7 @@ def run_full_loop(items: list[FeedItem], log_path: Path) -> None:
     # Pass 1: baseline + degraded — detect drift, fire correction
     # -------------------------------------------------------------------------
     drift_event = _pass1(
-        items, base_config, detector, run_id_map, baseline_items, baseline_recs
+        items, base_config, detector, run_id_map, baseline_items, baseline_recs, adapter_name
     )
 
     if drift_event is None:
@@ -777,7 +809,7 @@ def run_full_loop(items: list[FeedItem], log_path: Path) -> None:
             f"{len(anchor_cases)} anchors",
             flush=True,
         )
-        action = correction_handle(drift_event, failing_cases, anchor_cases)
+        action = _apply_correction(adapter_name, drift_event, failing_cases, anchor_cases)
         append_event(action)
         print(
             f"  CorrectionAction: {len(action.new_few_shot_examples)} examples — "
@@ -788,14 +820,13 @@ def run_full_loop(items: list[FeedItem], log_path: Path) -> None:
         )
         print(f"  rationale: {action.rationale}", flush=True)
 
-        # -----------------------------------------------------------------
-        # Knowledge graph: persist (trap, fix) rules from the same failures
-        # (second memory channel — read back into the prompt by the agent's
-        # correction-rules hook on every subsequent same-schema run)
-        # -----------------------------------------------------------------
-        print("[graph] Distilling failures into knowledge-graph rules ...", flush=True)
-        n_rules = _write_rules_to_graph(drift_event, failing_cases)
-        print(f"  {n_rules} rule(s) written to correction/graph_store.json", flush=True)
+        if adapter_name == "spider":
+            # -----------------------------------------------------------------
+            # Knowledge graph: persist (trap, fix) rules from the same failures
+            # -----------------------------------------------------------------
+            print("[graph] Distilling failures into knowledge-graph rules ...", flush=True)
+            n_rules = _write_rules_to_graph(drift_event, failing_cases)
+            print(f"  {n_rules} rule(s) written to correction/graph_store.json", flush=True)
 
     # -------------------------------------------------------------------------
     # Measure base accuracy on held-out WITHOUT examples (contamination-free)
@@ -817,6 +848,94 @@ def run_full_loop(items: list[FeedItem], log_path: Path) -> None:
     _print_comparison(recovery_records, base_accs=base_accs, diff="hard")
 
     print(f"\n[orchestrator] events.jsonl written to {log_path}", flush=True)
+
+
+def run_continuous_loop(
+    items: list[FeedItem],
+    log_path: Path,
+    adapter_name: str = "spider",
+    max_corrections: int = 3,
+    cooldown: int = 15,
+) -> None:
+    """Multi-cycle stream: drift → correct → recover can repeat; examples accumulate."""
+    from harness.runner import _active_config
+
+    base_config = _make_base_config("continuous")
+    detector = Detector(DetectorConfig())
+    run_id_map: dict = {}
+    baseline_items: list = []
+    baseline_recs: list = []
+    correction_count = 0
+    drift_count = 0
+    total = len(items)
+
+    print(
+        f"\n[continuous] {total} items, adapter={adapter_name}, "
+        f"max_corrections={max_corrections}, cooldown={cooldown}",
+        flush=True,
+    )
+
+    for i, item in enumerate(items, 1):
+        config = _active_config(base_config)
+        rec = _run_item(item, config, adapter_name)
+        if rec is None:
+            print(f"  [{i:>3}/{total}] [{item.phase:<9}] SKIP", flush=True)
+            continue
+
+        append_event(rec)
+        run_id_map[rec.run_id] = (rec, item)
+        if item.phase == "baseline":
+            baseline_items.append(item)
+            baseline_recs.append(rec)
+
+        ev = detector.update(rec)
+        mark = "✓" if rec.execution_accuracy == 1.0 else "✗"
+        drift_tag = f" 🔔DRIFT#{drift_count + 1}" if ev else ""
+        print(
+            f"  [{i:>3}/{total}] [{item.phase:<9}] [{item.difficulty:<6}] {mark}"
+            f"  {item.question[:45]}{drift_tag}",
+            flush=True,
+        )
+
+        if ev is None:
+            continue
+
+        drift_count += 1
+        append_event(ev)
+        print(
+            f"\n  [detector] Drift #{drift_count}: severity={ev.severity:.3f}, "
+            f"window={ev.window_mean:.3f} vs baseline={ev.baseline_mean:.3f}\n",
+            flush=True,
+        )
+
+        if correction_count >= max_corrections:
+            print(
+                f"  [continuous] max_corrections={max_corrections} reached — skipping correction.",
+                flush=True,
+            )
+            detector.resume_after_correction(cooldown=cooldown)
+            continue
+
+        failing_cases = _harvest_failing_cases(run_id_map)
+        if not failing_cases:
+            failing_cases = _build_failing_cases(ev, run_id_map)
+        anchor_cases = _pick_anchors(baseline_items, baseline_recs)
+        action = _apply_correction(adapter_name, ev, failing_cases, anchor_cases)
+        append_event(action)
+        correction_count += 1
+        print(
+            f"  [correction #{correction_count}] {len(action.new_few_shot_examples)} examples",
+            flush=True,
+        )
+        if adapter_name == "spider":
+            _write_rules_to_graph(ev, failing_cases)
+        detector.resume_after_correction(cooldown=cooldown)
+
+    print(
+        f"\n[continuous] complete: {drift_count} drift(s), {correction_count} correction(s). "
+        f"Log: {log_path}",
+        flush=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -877,6 +996,29 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--adapter",
+        choices=("spider", "gsm8k"),
+        default="spider",
+        help="Task domain: spider (text-to-SQL) or gsm8k (grade-school math).",
+    )
+    p.add_argument(
+        "--continuous",
+        action="store_true",
+        help="Multi-cycle stream: repeated drift→correct→recover; examples accumulate.",
+    )
+    p.add_argument(
+        "--max-corrections",
+        type=int,
+        default=3,
+        help="Cap correction cycles in --continuous mode (default 3).",
+    )
+    p.add_argument(
+        "--n-cycles",
+        type=int,
+        default=2,
+        help="Degraded/recovery cycles in --continuous feed (default 2).",
+    )
+    p.add_argument(
         "--fresh", action="store_true",
         help=(
             "Truncate events.jsonl before a real run so stale correction events "
@@ -892,7 +1034,7 @@ if __name__ == "__main__":
     from harness.agent import require_api_key
     require_api_key()
 
-    items = _build_feed(args.n, args.full)
+    items = _build_feed(args.n, args.full, adapter_name=args.adapter)
 
     # The validation modes exist to test the --full headline, and the correction
     # examples in events.jsonl were generated under --full. Force the 80/phase feed
@@ -900,7 +1042,7 @@ if __name__ == "__main__":
     if (args.significance or args.ceiling) and not args.full:
         print("[orchestrator] forcing --full feed for validation mode "
               "(matches the headline's held-out sample).", flush=True)
-        items = _build_feed(args.n, full=True)
+        items = _build_feed(args.n, full=True, adapter_name=args.adapter)
 
     if args.significance:
         significance_run(items)
@@ -951,4 +1093,18 @@ if __name__ == "__main__":
             graph_store.unlink()
             print("[orchestrator] correction/graph_store.json cleared (--fresh).")
 
-    run_full_loop(items, log_path)
+    if args.continuous:
+        cont_items = _build_continuous_feed(
+            n_cycles=args.n_cycles,
+            full=args.full,
+            adapter_name=args.adapter,
+        )
+        run_continuous_loop(
+            cont_items,
+            log_path,
+            adapter_name=args.adapter,
+            max_corrections=args.max_corrections,
+        )
+        sys.exit(0)
+
+    run_full_loop(items, log_path, adapter_name=args.adapter)

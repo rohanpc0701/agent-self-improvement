@@ -62,8 +62,9 @@ def build_state(path: Path | str = None, window: int = WINDOW) -> dict:
     events = read_events(path)  # parsed records, in stream order
 
     runs: list[dict] = []
-    drift: dict | None = None
-    correction: dict | None = None
+    drifts: list[dict] = []
+    corrections: list[dict] = []
+    active_examples: list[dict] = []
 
     # accumulators (whole history; we slice the trailing `window` for each snapshot)
     acc_all: list[float] = []
@@ -96,9 +97,9 @@ def build_state(path: Path | str = None, window: int = WINDOW) -> dict:
             # how many same-DB correction examples are currently active for this run's schema
             # (populated after correction fires; used to show the learning mechanism in the UI)
             same_db_active = 0
-            if correction:
+            if active_examples:
                 same_db_active = sum(
-                    1 for e in correction["examples"] if e.get("db_id") == ev.db_id
+                    1 for e in active_examples if e.get("db_id") == ev.db_id
                 )
 
             runs.append({
@@ -127,24 +128,31 @@ def build_state(path: Path | str = None, window: int = WINDOW) -> dict:
             seen_runs += 1
 
         elif isinstance(ev, DriftEvent):
-            drift = {
-                "at": seen_runs,  # fired after this many runs
+            drifts.append({
+                "at": seen_runs,
+                "index": len(drifts),
                 "channel": ev.channel,
                 "severity": ev.severity,
                 "window_mean": ev.window_mean,
                 "baseline_mean": ev.baseline_mean,
                 "failure_mode": ev.failure_mode.value,
                 "failing_run_ids": ev.failing_run_ids,
-            }
+            })
 
         elif isinstance(ev, CorrectionAction):
-            correction = {
+            batch = [e.model_dump(mode="json") for e in ev.new_few_shot_examples]
+            active_examples.extend(batch)
+            corrections.append({
                 "at": seen_runs,
+                "index": len(corrections),
                 "triggered_by": ev.triggered_by,
                 "rationale": ev.rationale,
-                # matched by question text in the example panel (Phase D)
-                "examples": [e.model_dump(mode="json") for e in ev.new_few_shot_examples],
-            }
+                "examples": batch,
+                "total_examples": len(active_examples),
+            })
+
+    drift = drifts[0] if drifts else None
+    correction = corrections[0] if corrections else None
 
     return {
         "window": window,
@@ -153,6 +161,8 @@ def build_state(path: Path | str = None, window: int = WINDOW) -> dict:
         "runs": runs,
         "drift": drift,
         "correction": correction,
+        "drifts": drifts,
+        "corrections": corrections,
     }
 
 

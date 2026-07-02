@@ -2,26 +2,47 @@
 
 [![CI](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml/badge.svg)](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml)
 
-**Drift detection and automated self-improvement for AI agents.**
+**Drift detection and automated self-improvement for AI agents** — task-agnostic middleware
+with adapters for text-to-SQL (Spider) and grade-school math (GSM8K).
+
+![Recovery curve: drift detection and self-correction replay](docs/demo.gif)
 
 A text-to-SQL agent runs in "production" against the [Spider](https://yale-lily.github.io/spider)
 benchmark. When its accuracy **drifts** as queries get harder, the system detects the
 degradation, makes the agent **learn from its own failures** — a teacher model turns the
 agent's mistakes into few-shot examples and knowledge-graph rules — and the agent **recovers
-on questions it has never seen**. No human in the loop. The detection-and-recovery pattern here —
-windowed drift detection over a telemetry stream, severity scoring, automated response — is a
-general infrastructure spine: the agent is just the system under observation, and the same shape
-applies to monitoring any drifting stream, from API behavior to physical-system telemetry.
+on questions it has never seen**. No human in the loop. The same detector → correction →
+viewer pipeline runs on **GSM8K math** via `--adapter gsm8k`, so the pitch is middleware,
+not a single-benchmark script.
 
 > Started at **The Self-Improvement Stack** track of the AI Engineer World's Fair Hackathon
-> (June 2026) and extended since: local open-source student support, knowledge-graph correction
-> memory, and enriched failure harvesting were added post-event.
+> (June 2026) and extended since: local open-source student support, knowledge-graph correction,
+> enriched failure harvesting, continuous multi-drift mode, and a second task adapter.
+
+**Resume bullet:** Built self-improvement middleware for verifiable agent tasks — local
+1.5B student + cloud teacher, +23pt held-out hard-bucket recovery on Spider, contamination-free
+eval, 219-test CI, dual SQL/math adapters.
+
+See [`docs/design.md`](docs/design.md) for architecture decisions, dose-response findings, and
+measurement guardrails.
 
 ---
 
 ## Results
 
-### Local open-source student (Qwen2.5-1.5B via Ollama) + cloud teacher
+### Dual-benchmark summary (local Qwen2.5-1.5B student)
+
+| Domain | Adapter | Hard-bucket WITHOUT | WITH correction | Δ |
+|---|---|---|---|---|
+| Text-to-SQL (Spider) | `--adapter spider` | 0.100 | **0.333** | **+0.233** |
+| Grade-school math (GSM8K) | `--adapter gsm8k` | 0.150 | **0.350** | **+0.200** |
+
+Spider uses 24 teacher-verified same-schema SQL examples (`AGENT_USE_RULES=0`). GSM8K uses
+gold-answer few-shots from the LEARN split — rules are SQL-specific and skipped for math.
+Effect stable across seeds on Spider probe: run `python3 scripts/multi_seed_eval.py` for
+mean ± std over seeds `[42, 7, 99]`.
+
+### Local open-source student (Qwen2.5-1.5B via Ollama) + cloud teacher — Spider detail
 
 The flagship configuration: a **1.5B-parameter student runs locally and free** on the hot path;
 the frontier teacher (MiniMax-M3) is called only when drift fires. The student **more than
@@ -67,6 +88,8 @@ The self-improved base agent **exceeded its own teacher** on the same questions 
 produce, scaffolding the weaker model beyond the stronger one's unaided performance.
 
 <img width="1045" height="678" alt="Self Improving Agent" src="https://github.com/user-attachments/assets/83d13a2b-cb72-49c9-a72e-bb87b0264062" />
+
+*Hackathon screenshot above; animated replay from recorded telemetry: [`docs/demo.gif`](docs/demo.gif).*
 
 In one unattended run the detector fired automatically at the change-point
 (`severity=0.295`, windowed accuracy `0.48` vs `0.775` baseline), correction synthesized 10
@@ -179,13 +202,23 @@ live viewer with nothing but Python installed:
 
 ```bash
 pip install -r requirements.txt
-VIEWER_LOG=fixtures/demo_events.jsonl uvicorn viewer.app:app --port 8011
+make demo
+# or: VIEWER_LOG=fixtures/demo_events.jsonl uvicorn viewer.app:app --port 8011
 # open http://127.0.0.1:8011
 ```
 
+**Multi-drift continuous demo** (two V-shapes on one chart):
+
+```bash
+VIEWER_LOG=fixtures/demo_continuous.jsonl make demo
+```
+
+Generate the GIF locally: `make gif` (requires `pip install pillow`).
+
 You'll see the accuracy curve crater at the change-point, the drift alarm fire, and the
 recovery climb after the teacher's examples are injected — the exact telemetry from the
-Qwen2.5-1.5B run in the results table above.
+Qwen2.5-1.5B run in the results table above. The viewer shows **multiple drift markers**,
+a **correction timeline**, and a **what-changed** panel for injected examples.
 
 ---
 
@@ -223,6 +256,16 @@ deliberately weak so it genuinely struggles on hard SQL — that's the point.
 ```bash
 # Full end-to-end demo: baseline → change-point → drift → correction → recovery
 python orchestrator.py --full --fresh
+
+# Spider (default) or GSM8K math adapter
+python orchestrator.py --adapter spider --full --fresh
+python orchestrator.py --adapter gsm8k --full --fresh
+
+# Continuous multi-drift: repeated degrade→correct→recover; examples accumulate (cap 32)
+AGENT_USE_RULES=0 python orchestrator.py --continuous --max-corrections 3 --fresh
+
+# Multi-seed stability check (cheap probe, ~22 calls per seed)
+python3 scripts/multi_seed_eval.py
 
 # Cheap validation gates (run these before a full run — they save API calls):
 python orchestrator.py --probe              # ~22 calls: do schema-relevant examples help?
@@ -276,18 +319,22 @@ A full run prints the bottom line — windowed drift detection plus the side-by-
 
 ```
 contracts/      FROZEN shared schemas + the events.jsonl read/write helper
+core/           TaskAdapter protocol
+adapters/       spider_sql, gsm8k_math benchmark adapters
 harness/        text-to-SQL agent, Spider execution-eval, change-point feed
 detector/       windowed drift detection + failure-mode classification
-correction/     teacher → verify → anchor → few-shot examples
+correction/     teacher → verify → anchor → few-shot examples + example memory cap
 viewer/         FastAPI + Chart.js live view (server-side windowing; not Streamlit)
-fixtures/       Spider subset, SQLite DBs, mock generators
-orchestrator.py wires the full live loop
+fixtures/       Spider subset, GSM8K slice, SQLite DBs, mock generators, demo logs
+docs/           design.md, demo.gif
+scripts/        demo.sh, multi_seed_eval.py, generate_demo_gif.py
+orchestrator.py wires the full live loop (--adapter, --continuous)
 ```
 
 ## Testing
 
 ```bash
-pytest        # 212 tests across all stages
+pytest        # 219 tests across all stages
 ```
 
 Tests are hermetic — external model calls and DB lookups are injected, so the full suite runs

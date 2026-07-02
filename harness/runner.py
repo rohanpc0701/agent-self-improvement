@@ -13,19 +13,24 @@ import uuid
 import time
 
 from contracts.eventlog import append_event, read_events
-from contracts.schemas import AgentConfig, CorrectionAction, Difficulty, TelemetryRecord
+from contracts.schemas import AgentConfig, Difficulty, TelemetryRecord
 from harness import agent, evaluator
 from harness.feed import FeedItem, build_stream, stream
 from harness.spider import get_db_path, load_questions, questions_by_difficulty, schema_text
 
 
+from correction.memory import merge_examples
+
+
 def _active_config(base: AgentConfig) -> AgentConfig:
-    """Return base config, optionally updated with latest correction's few-shot examples."""
+    """Return base config with merged few-shot examples from all correction events."""
     corrections = read_events(only="correction")
     if not corrections:
         return base
-    latest: CorrectionAction = corrections[-1]
-    return base.model_copy(update={"few_shot_examples": latest.new_few_shot_examples})
+    merged: list = []
+    for action in corrections:
+        merged = merge_examples(merged, action.new_few_shot_examples)
+    return base.model_copy(update={"few_shot_examples": merged})
 
 
 def run_item(

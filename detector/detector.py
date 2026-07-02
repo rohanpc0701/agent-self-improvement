@@ -183,6 +183,7 @@ class Detector:
             d: RollingStats(maxlen=self._cfg.window) for d in Difficulty
         }
         self._breach_streak: int = 0
+        self._cooldown_remaining: int = 0
         self._record_window: deque[TelemetryRecord] = deque(maxlen=self._cfg.window)
 
     # ------------------------------------------------------------------
@@ -237,6 +238,16 @@ class Detector:
         failing_ids = (dom_ids + other_ids)[: self._cfg.failing_ids_cap]
         return dominant, failing_ids
 
+    def resume_after_correction(self, cooldown: int = 15) -> None:
+        """Re-arm detector after a correction cycle (continuous mode).
+
+        Returns to NORMAL, clears breach streak, and ignores drift for `cooldown`
+        subsequent records so correction doesn't immediately re-fire on the same trough.
+        """
+        self._state = _State.NORMAL
+        self._breach_streak = 0
+        self._cooldown_remaining = max(0, cooldown)
+
     def stratified_means(self) -> dict[Difficulty, float]:
         """Current windowed execution-accuracy per difficulty.
 
@@ -259,6 +270,9 @@ class Detector:
         return None
 
     def _handle_normal(self, record: TelemetryRecord) -> DriftEvent | None:
+        if self._cooldown_remaining > 0:
+            self._cooldown_remaining -= 1
+            return None
         # Guard: only evaluate once the window is full (defensive against
         # baseline_len < window misconfig — see Plan 002 Step 2).
         if self._acc_window.n < self._cfg.window:

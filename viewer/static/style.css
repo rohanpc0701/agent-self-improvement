@@ -309,6 +309,33 @@ html, body {
   white-space: pre;
 }
 .sql-block.learned pre { border-color: rgba(63,185,80,.4); }
+.sql-block.what-changed pre { border-color: rgba(63,185,80,.35); }
+
+/* --- correction timeline --- */
+.timeline {
+  margin: 2rem 0 1.5rem;
+  padding: 1.25rem 1.35rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.timeline h2 {
+  margin: 0 0 .75rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.timeline-list {
+  margin: 0;
+  padding: 0 0 0 1.25rem;
+  color: var(--muted);
+  font-size: .9rem;
+}
+.timeline-list li {
+  margin: .35rem 0;
+  cursor: pointer;
+}
+.timeline-list li:hover { color: var(--text); }
+.timeline-list li.active { color: var(--c-correct); }
 
 /* --- legend --- */
 .legend {

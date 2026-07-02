@@ -66,30 +66,30 @@ def _make_mixed_items(n_baseline: int = 2, n_recovery: int = 4) -> list[FeedItem
 
 class TestBuildFeed:
     def test_phases_present(self):
-        with patch("orchestrator.load_questions", return_value=_make_questions()):
+        with patch("harness.spider.load_questions", return_value=_make_questions()):
             items = _build_feed(n=5, full=False)
         assert {i.phase for i in items} == {"baseline", "degraded", "recovery"}
 
     def test_n_per_phase(self):
-        with patch("orchestrator.load_questions", return_value=_make_questions()):
+        with patch("harness.spider.load_questions", return_value=_make_questions()):
             items = _build_feed(n=7, full=False)
         for phase in ("baseline", "degraded", "recovery"):
             assert len([i for i in items if i.phase == phase]) == 7
 
     def test_full_uses_80(self):
-        with patch("orchestrator.load_questions", return_value=_make_questions()):
+        with patch("harness.spider.load_questions", return_value=_make_questions()):
             items = _build_feed(n=5, full=True)
         assert len([i for i in items if i.phase == "baseline"]) == 80
 
     def test_full_overrides_n(self):
-        with patch("orchestrator.load_questions", return_value=_make_questions()):
+        with patch("harness.spider.load_questions", return_value=_make_questions()):
             items = _build_feed(n=10, full=True)
         # full=True always wins regardless of --n
         assert len([i for i in items if i.phase == "recovery"]) == 80
 
     def test_degraded_and_recovery_disjoint(self):
         """Core benchmark-credibility invariant: no leakage from learn into held-out."""
-        with patch("orchestrator.load_questions", return_value=_make_questions()):
+        with patch("harness.spider.load_questions", return_value=_make_questions()):
             items = _build_feed(n=10, full=False)
         deg_ids = {i.question_id for i in items if i.phase == "degraded"}
         rec_ids = {i.question_id for i in items if i.phase == "recovery"}
@@ -100,20 +100,20 @@ class TestBuildFeed:
 
     def test_deterministic_across_calls(self):
         qs = _make_questions()
-        with patch("orchestrator.load_questions", return_value=qs):
+        with patch("harness.spider.load_questions", return_value=qs):
             items1 = _build_feed(n=5, full=False)
-        with patch("orchestrator.load_questions", return_value=qs):
+        with patch("harness.spider.load_questions", return_value=qs):
             items2 = _build_feed(n=5, full=False)
         assert [(i.question_id, i.phase) for i in items1] == [(i.question_id, i.phase) for i in items2]
 
     def test_baseline_difficulty(self):
-        with patch("orchestrator.load_questions", return_value=_make_questions()):
+        with patch("harness.spider.load_questions", return_value=_make_questions()):
             items = _build_feed(n=10, full=False)
         baseline = [i for i in items if i.phase == "baseline"]
         assert all(i.difficulty in ("easy", "medium") for i in baseline)
 
     def test_recovery_difficulty(self):
-        with patch("orchestrator.load_questions", return_value=_make_questions()):
+        with patch("harness.spider.load_questions", return_value=_make_questions()):
             items = _build_feed(n=10, full=False)
         recovery = [i for i in items if i.phase == "recovery"]
         assert all(i.difficulty in ("hard", "extra") for i in recovery)

@@ -26,7 +26,39 @@ function withAlpha(hex, a) {
 let chart = null; // the Chart instance
 let STATE = null; // the /api/state payload
 let currentRun = 0; // the run the scrubber / replay is parked on
-let CORR_BY_Q = {}; // question -> teacher's corrected SQL (from the correction event)
+let ALL_EXAMPLES = {}; // question -> latest injected example
+
+function findInjectedExample(question) {
+  return ALL_EXAMPLES[question] || null;
+}
+
+function buildTimeline(state) {
+  const section = document.getElementById("timeline-section");
+  const list = document.getElementById("timeline");
+  const corrections = state.corrections || (state.correction ? [state.correction] : []);
+  if (!corrections.length) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  list.innerHTML = corrections
+    .map(
+      (c, i) =>
+        `<li data-at="${c.at}" data-idx="${i}">` +
+        `Correction ${i + 1} @ run ${c.at}: +${c.examples.length} examples ` +
+        `(total ${c.total_examples || c.examples.length})` +
+        `</li>`
+    )
+    .join("");
+  list.querySelectorAll("li").forEach((li) => {
+    li.addEventListener("click", () => {
+      pause();
+      setCurrentRun(parseInt(li.dataset.at, 10));
+      list.querySelectorAll("li").forEach((x) => x.classList.remove("active"));
+      li.classList.add("active");
+    });
+  });
+}
 let POINTS = {}; // full {x,y} arrays per stratum (sliced for the bright reveal)
 
 // the bright (revealed) datasets, by stratum -> index into chart.data.datasets
@@ -287,6 +319,18 @@ function updateSqlPanel(r, k) {
   } else {
     activeEl.hidden = true;
   }
+
+  const injected = findInjectedExample(r.question);
+  const wc = document.getElementById("what-changed");
+  const corrAt = (STATE.corrections && STATE.corrections.length)
+    ? STATE.corrections[0].at
+    : (STATE.correction ? STATE.correction.at : Infinity);
+  if (injected && k >= corrAt) {
+    document.getElementById("ex-injected").textContent = injected.correct_sql || "—";
+    wc.hidden = false;
+  } else {
+    wc.hidden = true;
+  }
 }
 
 function setCurrentRun(k) {
@@ -360,10 +404,11 @@ function setupTransport(state) {
     }
   });
   const jump = document.getElementById("jump-drift");
-  if (state.drift) {
+  const firstDrift = (state.drifts && state.drifts[0]) || state.drift;
+  if (firstDrift) {
     jump.addEventListener("click", () => {
       pause();
-      setCurrentRun(state.drift.at);
+      setCurrentRun(firstDrift.at);
     });
   } else {
     jump.disabled = true;
@@ -372,12 +417,14 @@ function setupTransport(state) {
 
 function render(state) {
   STATE = state;
-  CORR_BY_Q = {};
-  if (state.correction) {
-    for (const e of state.correction.examples) CORR_BY_Q[e.question] = e.correct_sql;
+  ALL_EXAMPLES = {};
+  const allCorrs = state.corrections || (state.correction ? [state.correction] : []);
+  for (const c of allCorrs) {
+    for (const e of c.examples) ALL_EXAMPLES[e.question] = e;
   }
   document.getElementById("window-size").textContent = state.window;
   buildLegend();
+  buildTimeline(state);
   document.getElementById("caption").textContent = buildCaption(state);
 
   const runs = state.runs;
@@ -388,15 +435,27 @@ function render(state) {
   };
 
   const marks = [];
-  if (state.drift)
-    marks.push({ at: state.drift.at, color: COL.drift, label: "⚠ drift detected", anchor: "top" });
-  if (state.correction)
+  const drifts = state.drifts || (state.drift ? [state.drift] : []);
+  drifts.forEach((d, i) => {
     marks.push({
-      at: state.correction.at,
-      color: COL.correct,
-      label: `✚ learned +${state.correction.examples.length}`,
-      anchor: "bottom",
+      at: d.at,
+      color: COL.drift,
+      label: drifts.length > 1 ? `⚠ drift ${i + 1}` : "⚠ drift detected",
+      anchor: i % 2 === 0 ? "top" : "bottom",
     });
+  });
+  const corrections = state.corrections || (state.correction ? [state.correction] : []);
+  corrections.forEach((c, i) => {
+    marks.push({
+      at: c.at,
+      color: COL.correct,
+      label:
+        corrections.length > 1
+          ? `✚ learn #${i + 1} +${c.examples.length}`
+          : `✚ learned +${c.examples.length}`,
+      anchor: i % 2 === 0 ? "bottom" : "top",
+    });
+  });
 
   // Static SOTA reference line — constant across all runs
   const sotaData = state.runs.map((r) => ({ x: r.run_index, y: TEACHER_CEILING }));
