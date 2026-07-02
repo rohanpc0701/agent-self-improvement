@@ -1,13 +1,19 @@
-"""Text-to-SQL agent (MiniMax, weaker tier as base).
+"""Text-to-SQL student agent.
 
 KEY: the prompt MUST include config.few_shot_examples — that growing list is how the
 agent recovers after correction feeds it learned examples.
 
-- generate_sql(question, schema_text, config) -> (sql, tokens, latency_ms)
+- generate_sql(question, schema_text, config) -> (sql, tokens, latency_ms, reasoning)
 
-Models:
-  base agent  -> MiniMax-M2.7-highspeed  (fast; genuinely struggles on hard SQL)
-  teacher     -> MiniMax-M3              (Mihir's correction stage uses this)
+Providers (student / hot path):
+  default -> MiniMax cloud API (MINIMAX_API_KEY required)
+  local   -> any OpenAI-compatible server, e.g. Ollama:
+             export AGENT_BASE_URL=http://localhost:11434/v1
+             then set AgentConfig.model to e.g. "qwen2.5:1.5b-instruct".
+             No API key needed — the weak student runs free and local;
+             only the teacher (correction path) calls the cloud.
+
+Teacher (correction stage) stays on MiniMax-M3 via correction/teacher.py.
 """
 from __future__ import annotations
 
@@ -29,15 +35,31 @@ class MissingCredentialsError(RuntimeError):
     error-SQL telemetry that silently pollutes the drift stream."""
 
 
+def _base_url() -> str:
+    return os.environ.get("AGENT_BASE_URL", _MINIMAX_BASE_URL)
+
+
+def _is_local() -> bool:
+    url = _base_url()
+    return "localhost" in url or "127.0.0.1" in url
+
+
 def require_api_key() -> None:
     """Call at startup so a missing key stops the run loudly, before any
     telemetry is written. Without this, every run becomes a fake '-- error'
-    record that the evaluator can score as valid/correct by accident."""
+    record that the evaluator can score as valid/correct by accident.
+
+    Skipped for local providers (AGENT_BASE_URL pointing at localhost) —
+    Ollama and friends don't need credentials."""
+    if _is_local():
+        return
     if not os.environ.get("MINIMAX_API_KEY"):
         raise MissingCredentialsError(
             "MINIMAX_API_KEY is not set. Export it in THIS shell before running:\n"
             "    export MINIMAX_API_KEY=sk-...\n"
-            "then re-run. (A key set in another terminal does not carry over.)"
+            "then re-run. (A key set in another terminal does not carry over.)\n"
+            "Or run the student locally with no key:\n"
+            "    export AGENT_BASE_URL=http://localhost:11434/v1  # Ollama"
         )
 
 
@@ -46,8 +68,8 @@ def _get_client() -> OpenAI:
     if _client is None:
         require_api_key()
         _client = OpenAI(
-            api_key=os.environ["MINIMAX_API_KEY"],
-            base_url=_MINIMAX_BASE_URL,
+            api_key=os.environ.get("MINIMAX_API_KEY", "ollama"),  # local servers ignore the key
+            base_url=_base_url(),
         )
     return _client
 

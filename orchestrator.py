@@ -12,6 +12,7 @@ Flow:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -27,7 +28,10 @@ from harness.feed import FeedItem, build_stream
 from harness.runner import run_item, run_stream
 from harness.spider import load_questions
 
-_BASE_MODEL = "MiniMax-M2.7-highspeed"
+# Student model. Override via env for a local open-source student, e.g.:
+#   export AGENT_BASE_URL=http://localhost:11434/v1
+#   export AGENT_MODEL=qwen2.5:1.5b-instruct
+_BASE_MODEL = os.environ.get("AGENT_MODEL", "MiniMax-M2.7-highspeed")
 _SEED = 42  # fixed so dry-run-heldout and the live run measure the exact same pools
 
 # Number of easy baseline successes to inject as anti-forgetting anchors.
@@ -416,6 +420,46 @@ def _build_failing_cases(
     return cases
 
 
+def _harvest_failing_cases(
+    run_id_map: dict,
+    max_per_db: int = 6,
+    max_total: int = 24,
+) -> list[FailingCase]:
+    """Harvest ALL degraded-phase failures, not just the drift event's capped list.
+
+    The detector caps failing_run_ids at 8, and the stream samples with replacement,
+    so drift-captured cases alone give most schemas 0-1 examples — too dilute a dose
+    for a small student (validated: ~6 same-DB examples per question recovered +27pts
+    in the probe; 1-2 recovered nothing). Dedupe by question, round-robin across
+    db_ids so every degraded schema gets coverage, cap per-DB and total to bound
+    teacher API calls.
+    """
+    by_db: dict[str, list[FailingCase]] = {}
+    seen_questions: set[str] = set()
+    for rec, item in run_id_map.values():
+        if item.phase != "degraded" or rec.execution_accuracy != 0.0:
+            continue
+        if item.question_id in seen_questions:
+            continue
+        seen_questions.add(item.question_id)
+        by_db.setdefault(item.db_id, []).append(FailingCase(
+            run_id=rec.run_id,
+            question=rec.question or item.question,
+            db_id=rec.db_id or item.db_id,
+            broken_sql=rec.generated_sql,
+            gold_sql=item.gold_sql,
+            difficulty=item.difficulty,
+        ))
+
+    # Round-robin across DBs so no schema is starved before caps hit.
+    cases: list[FailingCase] = []
+    for depth in range(max_per_db):
+        for db in sorted(by_db):
+            if depth < len(by_db[db]) and len(cases) < max_total:
+                cases.append(by_db[db][depth])
+    return cases
+
+
 def _write_rules_to_graph(
     event: DriftEvent,
     failing_cases: list[FailingCase],
@@ -551,11 +595,21 @@ def _pass2(
     items: list[FeedItem],
     base_config: AgentConfig,
 ) -> list:
-    """Run recovery items. _active_config in the harness reads the CorrectionAction."""
+    """Run recovery items. _active_config in the harness reads the CorrectionAction.
+
+    AGENT_USE_RULES=0 disables knowledge-graph rule injection during recovery —
+    useful to isolate the few-shot-example effect (small students can be confused
+    by abstract rule text; examples are the validated channel).
+    """
+    use_rules = os.environ.get("AGENT_USE_RULES", "1") != "0"
     recovery_items = [it for it in items if it.phase == "recovery"]
     total = len(recovery_items)
-    print(f"\n[pass 2] {total} held-out items (recovery, with learned examples) ...", flush=True)
-    records = run_stream(recovery_items, base_config)
+    rules_note = "rules ON" if use_rules else "rules OFF (AGENT_USE_RULES=0)"
+    print(
+        f"\n[pass 2] {total} held-out items (recovery, learned examples, {rules_note}) ...",
+        flush=True,
+    )
+    records = run_stream(recovery_items, base_config, use_rules=use_rules)
     return records
 
 
@@ -710,10 +764,17 @@ def run_full_loop(items: list[FeedItem], log_path: Path) -> None:
         # Correction: build examples from failing cases + easy anchors
         # -----------------------------------------------------------------
         print("[correction] Building few-shot examples from failing cases ...", flush=True)
-        failing_cases = _build_failing_cases(drift_event, run_id_map)
+        # Harvest the full degraded window (deduped, per-DB balanced) — the
+        # drift event's failing_run_ids are a capped subset, too dilute to teach
+        # a small student. Falls back to the event's list if harvesting is empty.
+        failing_cases = _harvest_failing_cases(run_id_map)
+        if not failing_cases:
+            failing_cases = _build_failing_cases(drift_event, run_id_map)
         anchor_cases = _pick_anchors(baseline_items, baseline_recs)
+        n_dbs = len({c.db_id for c in failing_cases})
         print(
-            f"  {len(failing_cases)} failing cases, {len(anchor_cases)} anchors",
+            f"  {len(failing_cases)} failing cases across {n_dbs} schemas, "
+            f"{len(anchor_cases)} anchors",
             flush=True,
         )
         action = correction_handle(drift_event, failing_cases, anchor_cases)

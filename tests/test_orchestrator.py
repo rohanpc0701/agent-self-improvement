@@ -206,7 +206,10 @@ class TestDryRunHeldout:
         with patch("orchestrator.run_item", side_effect=fake_run):
             dry_run_heldout(items)
 
-        assert seen[0].model == "MiniMax-M2.7-highspeed"
+        # _BASE_MODEL honors the AGENT_MODEL env override, so assert against it
+        # rather than a hardcoded name.
+        from orchestrator import _BASE_MODEL
+        assert seen[0].model == _BASE_MODEL
 
     def test_returns_dict_with_overall_key(self):
         items = _make_mixed_items(n_recovery=2)

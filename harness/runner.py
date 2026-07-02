@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import uuid
 import time
 
@@ -66,12 +67,14 @@ def run_item(
     )
 
 
-def run_stream(items: list[FeedItem], base_config: AgentConfig) -> list[TelemetryRecord]:
+def run_stream(
+    items: list[FeedItem], base_config: AgentConfig, use_rules: bool = True
+) -> list[TelemetryRecord]:
     records = []
     for item in stream(items):
         # re-read config each item so corrections take effect mid-stream
         config = _active_config(base_config)
-        rec = run_item(item, config)
+        rec = run_item(item, config, use_rules=use_rules)
         if rec is None:
             continue  # gold SQL broken — excluded from telemetry and accuracy aggregate
         append_event(rec)
@@ -96,7 +99,7 @@ if __name__ == "__main__":
 
     base_config = AgentConfig(
         config_id="v0-base",
-        model="MiniMax-M2.7-highspeed",
+        model=os.environ.get("AGENT_MODEL", "MiniMax-M2.7-highspeed"),
         few_shot_examples=[],
     )
     print(f"Running {len(items)} questions ({n} per phase)...")
