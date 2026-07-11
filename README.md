@@ -269,6 +269,10 @@ AGENT_USE_RULES=0 python orchestrator.py --continuous --max-corrections 3 --fres
 # Multi-seed stability check (cheap probe, ~22 calls per seed)
 python3 scripts/multi_seed_eval.py
 
+# Coding adapter measurement checklist (probe → degraded → full → significance)
+bash scripts/run_coding_eval.sh probe       # cheap with/without
+bash scripts/run_coding_eval.sh all         # full measurement pipeline
+
 # Cheap validation gates (run these before a full run — they save API calls):
 python orchestrator.py --probe              # ~22 calls: do schema-relevant examples help?
 python orchestrator.py --dry-run-heldout    # base accuracy on held-out (confirms headroom)
