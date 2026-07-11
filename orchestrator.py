@@ -997,9 +997,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--adapter",
-        choices=("spider", "gsm8k"),
+        choices=("spider", "gsm8k", "coding"),
         default="spider",
-        help="Task domain: spider (text-to-SQL) or gsm8k (grade-school math).",
+        help="Task domain: spider (SQL), gsm8k (math), or coding (unit-tested Python).",
     )
     p.add_argument(
         "--continuous",

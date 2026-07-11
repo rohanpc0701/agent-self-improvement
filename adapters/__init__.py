@@ -13,7 +13,11 @@ def get_adapter(name: str) -> TaskAdapter:
         from adapters.gsm8k_math import GSM8KMathAdapter
 
         return GSM8KMathAdapter()
-    raise ValueError(f"Unknown adapter {name!r} — choose spider or gsm8k")
+    if name == "coding":
+        from adapters.coding import CodingAdapter
+
+        return CodingAdapter()
+    raise ValueError(f"Unknown adapter {name!r} — choose spider, gsm8k, or coding")
 
 
 __all__ = ["get_adapter", "TaskAdapter"]

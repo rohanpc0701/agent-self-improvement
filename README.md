@@ -21,7 +21,7 @@ not a single-benchmark script.
 
 **Resume bullet:** Built self-improvement middleware for verifiable agent tasks — local
 1.5B student + cloud teacher, +23pt held-out hard-bucket recovery on Spider, contamination-free
-eval, 219-test CI, dual SQL/math adapters.
+eval, 228-test CI, pluggable adapters (SQL / math / coding).
 
 See [`docs/design.md`](docs/design.md) for architecture decisions, dose-response findings, and
 measurement guardrails.
@@ -35,12 +35,13 @@ measurement guardrails.
 | Domain | Adapter | Hard-bucket WITHOUT | WITH correction | Δ |
 |---|---|---|---|---|
 | Text-to-SQL (Spider) | `--adapter spider` | 0.100 | **0.333** | **+0.233** |
-| Grade-school math (GSM8K) | `--adapter gsm8k` | 0.150 | **0.350** | **+0.200** |
+| Grade-school math (GSM8K) | `--adapter gsm8k` | — | — | run `--adapter gsm8k --full` to measure |
+| Hard coding (unit tests) | `--adapter coding` | — | — | run `--adapter coding --full` to measure |
 
-Spider uses 24 teacher-verified same-schema SQL examples (`AGENT_USE_RULES=0`). GSM8K uses
-gold-answer few-shots from the LEARN split — rules are SQL-specific and skipped for math.
-Effect stable across seeds on Spider probe: run `python3 scripts/multi_seed_eval.py` for
-mean ± std over seeds `[42, 7, 99]`.
+Spider uses 24 teacher-verified same-schema SQL examples (`AGENT_USE_RULES=0`). Coding
+uses the same detector/correction spine with sandboxed unit-test verification
+(`fixtures/coding_subset.json`, 70 problems). GSM8K / coding held-out deltas are not
+claimed until measured end-to-end.
 
 ### Local open-source student (Qwen2.5-1.5B via Ollama) + cloud teacher — Spider detail
 
@@ -257,9 +258,10 @@ deliberately weak so it genuinely struggles on hard SQL — that's the point.
 # Full end-to-end demo: baseline → change-point → drift → correction → recovery
 python orchestrator.py --full --fresh
 
-# Spider (default) or GSM8K math adapter
+# Spider (default), GSM8K math, or hard coding problems
 python orchestrator.py --adapter spider --full --fresh
 python orchestrator.py --adapter gsm8k --full --fresh
+python orchestrator.py --adapter coding --full --fresh
 
 # Continuous multi-drift: repeated degrade→correct→recover; examples accumulate (cap 32)
 AGENT_USE_RULES=0 python orchestrator.py --continuous --max-corrections 3 --fresh
@@ -320,21 +322,21 @@ A full run prints the bottom line — windowed drift detection plus the side-by-
 ```
 contracts/      FROZEN shared schemas + the events.jsonl read/write helper
 core/           TaskAdapter protocol
-adapters/       spider_sql, gsm8k_math benchmark adapters
-harness/        text-to-SQL agent, Spider execution-eval, change-point feed
+adapters/       spider_sql, gsm8k_math, coding (unit-tested Python) benchmark adapters
+harness/        text-to-SQL agent, Spider execution-eval, coding sandbox, change-point feed
 detector/       windowed drift detection + failure-mode classification
 correction/     teacher → verify → anchor → few-shot examples + example memory cap
 viewer/         FastAPI + Chart.js live view (server-side windowing; not Streamlit)
-fixtures/       Spider subset, GSM8K slice, SQLite DBs, mock generators, demo logs
+fixtures/       Spider subset, GSM8K slice, coding_subset.json, SQLite DBs, demo logs
 docs/           design.md, demo.gif
-scripts/        demo.sh, multi_seed_eval.py, generate_demo_gif.py
-orchestrator.py wires the full live loop (--adapter, --continuous)
+scripts/        demo.sh, multi_seed_eval.py, generate_demo_gif.py, generate_coding_fixture.py
+orchestrator.py wires the full live loop (--adapter spider|gsm8k|coding, --continuous)
 ```
 
 ## Testing
 
 ```bash
-pytest        # 219 tests across all stages
+pytest        # 228 tests across all stages
 ```
 
 Tests are hermetic — external model calls and DB lookups are injected, so the full suite runs
