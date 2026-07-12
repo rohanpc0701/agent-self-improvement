@@ -39,7 +39,59 @@ class TestSandbox:
         assert result["ok"] is False
 
 
-class TestCodingFixture:
+class TestCodingRulesAndTeacher:
+    def test_strip_think_before_extract(self):
+        from adapters.coding import _strip_think
+        from harness.sandbox import extract_python_code
+
+        raw = "<think>plan</think>\n```python\ndef f():\n    return 1\n```\n"
+        code = extract_python_code(_strip_think(raw))
+        assert "def f" in code
+
+    def test_rules_block_empty_without_graph(self, tmp_path, monkeypatch):
+        import correction.graph as g
+        from adapters.coding import _rules_block
+
+        monkeypatch.setattr(g, "_STORE_PATH", tmp_path / "graph_store.json")
+        g.reload()
+        assert _rules_block("dp", "climb stairs") == ""
+
+    def test_write_graph_rules_fallback(self, tmp_path, monkeypatch):
+        import correction.graph as g
+        from adapters.coding import write_graph_rules, _index
+        from contracts.schemas import DriftEvent, FailureMode
+        from correction.learner import FailingCase
+
+        monkeypatch.setattr(g, "_STORE_PATH", tmp_path / "graph_store.json")
+        g.reload()
+        # Force distill fallback (no API)
+        monkeypatch.setattr(
+            "correction.distill._call_model",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no api")),
+        )
+        p = _index()["h_climb_stairs"]
+        case = FailingCase(
+            run_id=f"{p['id']}_deadbeef",
+            question=p["question"],
+            broken_sql="def climb_stairs(n):\n    return n\n",
+            gold_sql=p["gold_solution"],
+            db_id=p["topic"],
+            difficulty="hard",
+        )
+        ev = DriftEvent(
+            detected_at=1.0,
+            channel="execution_accuracy",
+            severity=0.4,
+            baseline_mean=1.0,
+            window_mean=0.6,
+            failing_run_ids=[case.run_id],
+            failure_mode=FailureMode.INVALID_SQL,
+        )
+        n = write_graph_rules(ev, [case])
+        assert n == 1
+        rules = g.get_rules(p["topic"], f"Implement climb_stairs please")
+        assert rules, "expected trigger hit on function name"
+
     def test_load_enough_problems(self):
         qs = load_coding_questions()
         assert len(qs) >= 60

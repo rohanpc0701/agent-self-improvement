@@ -838,12 +838,17 @@ def run_full_loop(
         )
         print(f"  rationale: {action.rationale}", flush=True)
 
-        if adapter_name == "spider":
+        if adapter_name in ("spider", "coding"):
             # -----------------------------------------------------------------
             # Knowledge graph: persist (trap, fix) rules from the same failures
             # -----------------------------------------------------------------
             print("[graph] Distilling failures into knowledge-graph rules ...", flush=True)
-            n_rules = _write_rules_to_graph(drift_event, failing_cases)
+            if adapter_name == "coding":
+                from adapters.coding import write_graph_rules
+
+                n_rules = write_graph_rules(drift_event, failing_cases)
+            else:
+                n_rules = _write_rules_to_graph(drift_event, failing_cases)
             print(f"  {n_rules} rule(s) written to correction/graph_store.json", flush=True)
 
     # -------------------------------------------------------------------------
@@ -947,6 +952,10 @@ def run_continuous_loop(
         )
         if adapter_name == "spider":
             _write_rules_to_graph(ev, failing_cases)
+        elif adapter_name == "coding":
+            from adapters.coding import write_graph_rules
+
+            write_graph_rules(ev, failing_cases)
         detector.resume_after_correction(cooldown=cooldown)
 
     print(

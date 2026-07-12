@@ -2,21 +2,26 @@
 from __future__ import annotations
 
 import json
-import os
+import logging
+import re
 import time
 import uuid
 from pathlib import Path
 
-from openai import OpenAI
-
-from contracts.schemas import AgentConfig, Difficulty, FewShotExample, TelemetryRecord
+from contracts.schemas import (
+    AgentConfig,
+    Difficulty,
+    DriftEvent,
+    FewShotExample,
+    TelemetryRecord,
+)
 from correction.learner import FailingCase
 from harness import agent
 from harness.feed import FeedItem, build_continuous_stream, build_stream
 from harness.sandbox import extract_python_code, execution_accuracy
 
 _FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "coding_subset.json"
-_MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+_log = logging.getLogger(__name__)
 
 _SYSTEM = (
     "You are an expert Python programmer. Solve the problem by writing a single "
@@ -53,6 +58,12 @@ def load_coding_questions() -> list[dict]:
     return out
 
 
+def _strip_think(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL).strip()
+    return text
+
+
 def _examples_block(examples: list[FewShotExample], topic: str) -> str:
     same = [e for e in examples if not e.db_id or e.db_id == topic][:3]
     if not same:
@@ -63,11 +74,32 @@ def _examples_block(examples: list[FewShotExample], topic: str) -> str:
     return "\n\n".join(lines) + "\n\n"
 
 
+def _rules_block(topic: str, question: str) -> str:
+    """Runtime KG injection — same store as Spider, keyed by topic (db_id)."""
+    if not topic:
+        return ""
+    try:
+        from correction.inject import build_context, format_prompt_block
+
+        return format_prompt_block(build_context(topic, question))
+    except Exception:
+        return ""
+
+
 def generate_code(
-    question: str, config: AgentConfig, topic: str = "arrays"
+    question: str,
+    config: AgentConfig,
+    topic: str = "arrays",
+    use_rules: bool = True,
 ) -> tuple[str, int, float, str]:
     client = agent._get_client()
-    user = _examples_block(config.few_shot_examples, topic) + f"Problem:\n{question}\n"
+    parts = [_examples_block(config.few_shot_examples, topic)]
+    if use_rules:
+        rules = _rules_block(topic, question)
+        if rules:
+            parts.append(rules + "\n\n")
+    parts.append(f"Problem:\n{question}\n")
+    user = "".join(parts)
     t0 = time.perf_counter()
     resp = client.chat.completions.create(
         model=config.model,
@@ -93,12 +125,10 @@ def verify_solution(output: str, problem: dict) -> tuple[float, bool, str]:
 
 def _teacher_repair(problem: dict, broken: str) -> str | None:
     """Ask the teacher model for a repaired function; return code or None."""
-    key = os.environ.get("MINIMAX_API_KEY")
-    if not key:
-        return None
     try:
-        model = os.environ.get("TEACHER_MODEL", "MiniMax-M3")
-        client = OpenAI(api_key=key, base_url=_MINIMAX_BASE_URL)
+        from correction.provider import teacher_client_and_model
+
+        client, model = teacher_client_and_model()
         prompt = (
             f"{problem['question']}\n\n"
             f"Implement exactly: `def {problem['function_name']}(...):`\n"
@@ -119,11 +149,57 @@ def _teacher_repair(problem: dict, broken: str) -> str | None:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,
-            max_tokens=1024,
+            max_tokens=2048,
         )
-        return extract_python_code(resp.choices[0].message.content or "")
-    except Exception:
+        raw = _strip_think(resp.choices[0].message.content or "")
+        code = extract_python_code(raw)
+        return code or None
+    except Exception as exc:
+        _log.warning("coding teacher repair failed: %s", exc)
+        print(f"  [teacher] repair failed: {exc}", flush=True)
         return None
+
+
+def write_graph_rules(
+    event: DriftEvent,
+    failing_cases: list[FailingCase],
+    max_cases: int = 3,
+) -> int:
+    """Distill (trap, fix) rules from coding failures into the shared KG store."""
+    del event  # severity already gated by detector
+    from correction.contracts import FailedRun
+    from correction.distill import distill_code
+    from correction.graph import add_rule, maybe_promote
+
+    idx = _index()
+    n_written = 0
+    for case in failing_cases[:max_cases]:
+        try:
+            qid = case.run_id.rsplit("_", 1)[0]
+            problem = idx.get(qid)
+            fn = problem["function_name"] if problem else case.db_id
+            # Gold is always unit-test correct; teacher already ran in make_examples.
+            fixed = case.gold_sql
+
+            failed = FailedRun(
+                run_id=case.run_id,
+                db_id=case.db_id,
+                question=case.question,
+                broken_sql=case.broken_sql,
+                schema={case.db_id: [fn, "algorithm", "edge_cases"]},
+            )
+            rule = distill_code(failed, fixed)
+            if fn and fn.lower() not in rule.trigger.lower():
+                rule.trigger = fn
+            rule.applies_to = list({*rule.applies_to, f"schema:{case.db_id}:{fn}"})
+            rule.seen_dbs = [case.db_id]
+            add_rule(rule)
+            maybe_promote(rule)
+            n_written += 1
+            print(f"  [graph] rule {rule.id}: {rule.trap[:60]}", flush=True)
+        except Exception as exc:
+            print(f"  [graph] skipped {case.run_id}: {exc}", flush=True)
+    return n_written
 
 
 class CodingAdapter:
@@ -163,13 +239,12 @@ class CodingAdapter:
     def run_item(
         self, item: FeedItem, config: AgentConfig, use_rules: bool = True
     ) -> TelemetryRecord | None:
-        del use_rules  # KG rules are SQL-specific
         problem = _index().get(item.question_id)
         if problem is None:
             return None
 
         text, tokens, latency_ms, reasoning = generate_code(
-            item.question, config, topic=item.db_id
+            item.question, config, topic=item.db_id, use_rules=use_rules
         )
         code = extract_python_code(text)
         acc, valid, _err = verify_solution(text, problem)

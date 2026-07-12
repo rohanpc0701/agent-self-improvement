@@ -88,7 +88,7 @@ def test_format_prompt_block_non_empty(tmp_path):
     from correction.inject import build_context, format_prompt_block
     ctx = build_context("concert_singer", "concerts in a specific year")
     block = format_prompt_block(ctx)
-    assert block.startswith("Known corrections for this schema:")
+    assert block.startswith("Known corrections for this domain:")
     assert "WHERE" in block
 
 

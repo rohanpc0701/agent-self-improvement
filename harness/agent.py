@@ -9,11 +9,13 @@ Providers (student / hot path):
   default -> MiniMax cloud API (MINIMAX_API_KEY required)
   local   -> any OpenAI-compatible server, e.g. Ollama:
              export AGENT_BASE_URL=http://localhost:11434/v1
-             then set AgentConfig.model to e.g. "qwen2.5:1.5b-instruct".
-             No API key needed — the weak student runs free and local;
-             only the teacher (correction path) calls the cloud.
+  prime   -> Prime Intellect Inference (OpenAI-compatible):
+             export AGENT_BASE_URL=https://api.pinference.ai/api/v1
+             export PRIME_API_KEY=...
+             export AGENT_MODEL=<cheap open model id>
 
-Teacher (correction stage) stays on MiniMax-M3 via correction/teacher.py.
+Teacher (correction stage) stays on MiniMax-M3 via correction/teacher.py
+unless TEACHER_* overrides are set there.
 """
 from __future__ import annotations
 
@@ -26,13 +28,14 @@ from openai import OpenAI
 from contracts.schemas import AgentConfig, FewShotExample
 
 _MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+_PRIME_BASE_URL = "https://api.pinference.ai/api/v1"
 
 _client: OpenAI | None = None
 
 
 class MissingCredentialsError(RuntimeError):
-    """Raised when MINIMAX_API_KEY is not set — fail fast instead of emitting
-    error-SQL telemetry that silently pollutes the drift stream."""
+    """Raised when required API credentials are missing — fail fast instead of
+    emitting error-SQL telemetry that silently pollutes the drift stream."""
 
 
 def _base_url() -> str:
@@ -44,23 +47,49 @@ def _is_local() -> bool:
     return "localhost" in url or "127.0.0.1" in url
 
 
-def require_api_key() -> None:
-    """Call at startup so a missing key stops the run loudly, before any
-    telemetry is written. Without this, every run becomes a fake '-- error'
-    record that the evaluator can score as valid/correct by accident.
+def _is_prime() -> bool:
+    url = _base_url().lower()
+    return "pinference.ai" in url or "primeintellect" in url
 
-    Skipped for local providers (AGENT_BASE_URL pointing at localhost) —
-    Ollama and friends don't need credentials."""
+
+def _api_key() -> str:
+    """Pick the credential that matches the configured student endpoint."""
     if _is_local():
-        return
-    if not os.environ.get("MINIMAX_API_KEY"):
+        return os.environ.get("PRIME_API_KEY") or os.environ.get("MINIMAX_API_KEY") or "ollama"
+    if _is_prime():
+        key = os.environ.get("PRIME_API_KEY") or os.environ.get("PRIME_INTELLECT_API_KEY")
+        if not key:
+            raise MissingCredentialsError(
+                "PRIME_API_KEY is not set. Add it to .env or export it:\n"
+                "    export PRIME_API_KEY=...\n"
+                "    export AGENT_BASE_URL=https://api.pinference.ai/api/v1\n"
+                "    export AGENT_MODEL=<cheap-model-id>"
+            )
+        return key
+    key = os.environ.get("MINIMAX_API_KEY")
+    if not key:
         raise MissingCredentialsError(
             "MINIMAX_API_KEY is not set. Export it in THIS shell before running:\n"
             "    export MINIMAX_API_KEY=sk-...\n"
-            "then re-run. (A key set in another terminal does not carry over.)\n"
-            "Or run the student locally with no key:\n"
-            "    export AGENT_BASE_URL=http://localhost:11434/v1  # Ollama"
+            "Or use Prime Intellect:\n"
+            "    export AGENT_BASE_URL=https://api.pinference.ai/api/v1\n"
+            "    export PRIME_API_KEY=...\n"
+            "Or run the student locally:\n"
+            "    export AGENT_BASE_URL=http://localhost:11434/v1"
         )
+    return key
+
+
+def require_api_key() -> None:
+    """Call at startup so a missing key stops the run loudly, before any
+    telemetry is written. Without this, every run becomes a fake '-- error'
+    record that the detector / eval can mis-score.
+
+    Skipped for local providers (AGENT_BASE_URL pointing at localhost).
+    """
+    if _is_local():
+        return
+    _api_key()  # raises MissingCredentialsError if missing
 
 
 def _get_client() -> OpenAI:
@@ -68,7 +97,7 @@ def _get_client() -> OpenAI:
     if _client is None:
         require_api_key()
         _client = OpenAI(
-            api_key=os.environ.get("MINIMAX_API_KEY", "ollama"),  # local servers ignore the key
+            api_key=_api_key(),
             base_url=_base_url(),
         )
     return _client

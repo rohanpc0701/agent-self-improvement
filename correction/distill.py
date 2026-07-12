@@ -20,17 +20,28 @@ from .contracts import FailedRun, CorrectionRule
 log = logging.getLogger(__name__)
 
 _MINIMAX_BASE_URL = "https://api.minimax.io/v1"
-_DISTILL_MODEL = os.environ.get("DISTILL_MODEL", "MiniMax-M2.7-highspeed")
+_DEFAULT_DISTILL_MODEL = "MiniMax-M2.7-highspeed"
 
 _client: OpenAI | None = None
+_client_model: str | None = None
 
 
 def distill(failed: FailedRun, fixed_sql: str) -> CorrectionRule:
     """Diff broken vs fixed SQL and return a CorrectionRule (scope='db')."""
-    rule_id = f"rule:{failed.db_id}:{uuid.uuid4().hex[:8]}"
+    return _distill_with_prompt(failed, fixed_sql, domain="sql")
 
+
+def distill_code(failed: FailedRun, fixed_code: str) -> CorrectionRule:
+    """Diff broken vs fixed Python and return a topic-scoped CorrectionRule."""
+    return _distill_with_prompt(failed, fixed_code, domain="code")
+
+
+def _distill_with_prompt(
+    failed: FailedRun, fixed: str, *, domain: str
+) -> CorrectionRule:
+    rule_id = f"rule:{failed.db_id}:{uuid.uuid4().hex[:8]}"
     try:
-        parsed = _call_model(failed, fixed_sql)
+        parsed = _call_model(failed, fixed, domain=domain)
         applies_to = [
             f"schema:{failed.db_id}:{a}" if not a.startswith("schema:") else a
             for a in parsed.get("applies_to", [])
@@ -47,21 +58,26 @@ def distill(failed: FailedRun, fixed_sql: str) -> CorrectionRule:
             seen_dbs=[failed.db_id],
         )
     except Exception as e:
-        log.warning("distill: model call failed for run %s, using fallback rule: %s",
-                    failed.run_id, e)
-        return _fallback(rule_id, failed, fixed_sql)
+        log.warning(
+            "distill: model call failed for run %s, using fallback rule: %s",
+            failed.run_id,
+            e,
+        )
+        return _fallback(rule_id, failed, fixed, domain=domain)
 
 
 # ── internals ─────────────────────────────────────────────────────────────────
 
-def _get_client() -> OpenAI:
-    global _client
+def _get_client() -> tuple[OpenAI, str]:
+    """Reuse teacher endpoint resolution so distill works on Prime when MiniMax is dry."""
+    global _client, _client_model
     if _client is None:
-        key = os.environ.get("MINIMAX_API_KEY")
-        if not key:
-            raise RuntimeError("MINIMAX_API_KEY is not set — distill model calls will fail.")
-        _client = OpenAI(api_key=key, base_url=_MINIMAX_BASE_URL)
-    return _client
+        from correction.provider import teacher_client_and_model
+
+        _client, default_model = teacher_client_and_model()
+        _client_model = os.environ.get("DISTILL_MODEL") or default_model
+    assert _client_model is not None
+    return _client, _client_model
 
 
 def _strip_think(text: str) -> str:
@@ -71,19 +87,42 @@ def _strip_think(text: str) -> str:
     return text
 
 
-def _call_model(failed: FailedRun, fixed_sql: str) -> dict:
+def _call_model(failed: FailedRun, fixed: str, *, domain: str = "sql") -> dict:
     schema = "\n".join(
         f"  {t}({', '.join(c) if isinstance(c, list) else c})"
         for t, c in failed.schema.items()
     )
-    prompt = f"""Analyze these two SQL queries for the same question and extract a reusable correction rule.
+    if domain == "code":
+        prompt = f"""Analyze these two Python solutions for the same problem and extract a reusable correction rule.
+
+Problem: {failed.question}
+Topic / tags:
+{schema or failed.db_id}
+
+Broken code:
+{failed.broken_sql}
+
+Fixed code:
+{fixed}
+
+Runtime / test error: {failed.execution_error or "none"}
+
+Output JSON ONLY — no prose, no markdown fences:
+{{
+  "trap": "<specific mistake pattern the agent made>",
+  "fix": "<specific correction to apply>",
+  "trigger": "<1-3 keywords from the problem that signal this trap>",
+  "applies_to": ["<topic_or_algorithm_cue>"]
+}}"""
+    else:
+        prompt = f"""Analyze these two SQL queries for the same question and extract a reusable correction rule.
 
 Question: {failed.question}
 Schema:
 {schema}
 
 Broken SQL: {failed.broken_sql}
-Fixed SQL:  {fixed_sql}
+Fixed SQL:  {fixed}
 Execution error: {failed.execution_error or "none"}
 
 Output JSON ONLY — no prose, no markdown fences:
@@ -94,9 +133,9 @@ Output JSON ONLY — no prose, no markdown fences:
   "applies_to": ["<table_or_column_name>"]
 }}"""
 
-    client = _get_client()
+    client, model = _get_client()
     response = client.chat.completions.create(
-        model=_DISTILL_MODEL,
+        model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
     )
@@ -112,15 +151,23 @@ Output JSON ONLY — no prose, no markdown fences:
     return json.loads(text)
 
 
-def _fallback(rule_id: str, failed: FailedRun, fixed_sql: str) -> CorrectionRule:
+def _fallback(
+    rule_id: str, failed: FailedRun, fixed: str, *, domain: str = "sql"
+) -> CorrectionRule:
     tables = list(failed.schema.keys())
-    trigger = next((t for t in tables if t.lower() in fixed_sql.lower()), failed.db_id)
+    trigger = next((t for t in tables if t.lower() in fixed.lower()), failed.db_id)
+    if domain == "code":
+        trap = f"Incorrect algorithm / edge-case handling for {trigger}"
+        fix = f"Prefer a solution structured like: {fixed[:240]}"
+    else:
+        trap = f"Incorrect SQL for question about {trigger}"
+        fix = f"Use: {fixed[:200]}"
     return CorrectionRule(
         id=rule_id,
         scope="db",
         db_id=failed.db_id,
-        trap=f"Incorrect SQL for question about {trigger}",
-        fix=f"Use: {fixed_sql[:200]}",
+        trap=trap,
+        fix=fix,
         trigger=trigger,
         applies_to=[f"schema:{failed.db_id}:{trigger}"],
         source="react_repair",

@@ -27,4 +27,4 @@ def format_prompt_block(ctx: CorrectionContext) -> str:
     if not ctx.injected_rules:
         return ""
     lines = "\n".join(ctx.injected_rules)
-    return f"Known corrections for this schema:\n{lines}"
+    return f"Known corrections for this domain:\n{lines}"

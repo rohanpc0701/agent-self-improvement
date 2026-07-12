@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Coding-adapter measurement checklist (Phase 1).
-# Run from repo root. Requires Ollama student + MINIMAX_API_KEY for --full.
+# Run from repo root. Student: local Ollama by default, or Prime via
+# scripts/use_prime_student.sh. Teacher (--full): MINIMAX_API_KEY.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-export AGENT_BASE_URL="${AGENT_BASE_URL:-http://localhost:11434/v1}"
-export AGENT_MODEL="${AGENT_MODEL:-qwen2.5:1.5b-instruct}"
-export AGENT_USE_RULES="${AGENT_USE_RULES:-0}"
+# Caller overrides (e.g. use_prime_student.sh) must win over .env Ollama defaults.
+_caller_base="${AGENT_BASE_URL-}"
+_caller_model="${AGENT_MODEL-}"
+_caller_rules="${AGENT_USE_RULES-}"
 
 if [[ -f .env ]]; then
   # shellcheck disable=SC1091
@@ -14,6 +16,10 @@ if [[ -f .env ]]; then
   source .env
   set +a
 fi
+
+export AGENT_BASE_URL="${_caller_base:-${AGENT_BASE_URL:-http://localhost:11434/v1}}"
+export AGENT_MODEL="${_caller_model:-${AGENT_MODEL:-qwen2.5:1.5b-instruct}}"
+export AGENT_USE_RULES="${_caller_rules:-${AGENT_USE_RULES:-0}}"
 
 step="${1:-all}"
 
