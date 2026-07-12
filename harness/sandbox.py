@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_TIMEOUT_S = 2.0
+DEFAULT_TIMEOUT_S = 5.0
 
 
 def extract_python_code(text: str) -> str:

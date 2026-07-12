@@ -54,7 +54,7 @@ def load_coding_questions() -> list[dict]:
 
 
 def _examples_block(examples: list[FewShotExample], topic: str) -> str:
-    same = [e for e in examples if not e.db_id or e.db_id == topic][:6]
+    same = [e for e in examples if not e.db_id or e.db_id == topic][:3]
     if not same:
         return ""
     lines = ["Similar solved problems:"]

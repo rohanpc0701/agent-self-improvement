@@ -157,7 +157,7 @@ def _mcnemar_report(label: str, pairs: list[tuple[float, float]]) -> None:
     print("=" * 60, flush=True)
 
 
-def significance_run(items: list[FeedItem]) -> None:
+def significance_run(items: list[FeedItem], adapter_name: str = "spider") -> None:
     """McNemar paired significance test: same held-out questions WITHOUT vs WITH examples.
 
     Reads the CorrectionAction from events.jsonl (run --full first).
@@ -209,8 +209,8 @@ def significance_run(items: list[FeedItem]) -> None:
 
     for i, item in enumerate(unique, 1):
         # WITHOUT pass: no examples AND no knowledge-graph rules (clean control)
-        rec_wo = run_item(item, base_config, use_rules=False)
-        rec_w = run_item(item, with_config)
+        rec_wo = _run_item(item, base_config, adapter_name, use_rules=False)
+        rec_w = _run_item(item, with_config, adapter_name)
 
         if rec_wo is None or rec_w is None:
             n_skipped += 1
@@ -294,12 +294,13 @@ def _unique_acc(
 def dry_run_heldout(
     items: list[FeedItem],
     config: Optional[AgentConfig] = None,
+    adapter_name: str = "spider",
 ) -> dict[str, float]:
     """Run held-out (recovery) items at base config, no corrections injected.
 
     Contamination-free by construction:
     - Fresh AgentConfig with empty few_shot_examples (no _active_config call).
-    - run_item is called directly — it does not touch events.jsonl.
+    - Adapter run_item is called directly — it does not touch events.jsonl.
 
     Returns a dict with "overall" and per-difficulty unique-question accuracy.
     Unique-question accuracy deduplicates repeated samples (stream uses rng.choices with
@@ -322,12 +323,12 @@ def dry_run_heldout(
 
     print(
         f"[dry-run-heldout] {total} held-out items, base config (no corrections). "
-        f"All hard/extra on a reasoning model — expect a few seconds each.",
+        f"adapter={adapter_name} — expect a few seconds each.",
         flush=True,
     )
 
     for i, item in enumerate(held_out, 1):
-        rec = run_item(item, config, use_rules=False)  # contamination-free baseline
+        rec = _run_item(item, config, adapter_name, use_rules=False)
         if rec is None:
             n_skipped += 1
             print(f"  [{i:>3}/{total}] [{item.difficulty:<6}] SKIP (gold SQL failed)  "
@@ -622,22 +623,39 @@ def _pass1(
 def _pass2(
     items: list[FeedItem],
     base_config: AgentConfig,
+    adapter_name: str = "spider",
 ) -> list:
-    """Run recovery items. _active_config in the harness reads the CorrectionAction.
+    """Run recovery items. _active_config re-reads CorrectionAction each item.
 
     AGENT_USE_RULES=0 disables knowledge-graph rule injection during recovery —
     useful to isolate the few-shot-example effect (small students can be confused
     by abstract rule text; examples are the validated channel).
     """
+    from harness.runner import _active_config
+
     use_rules = os.environ.get("AGENT_USE_RULES", "1") != "0"
     recovery_items = [it for it in items if it.phase == "recovery"]
     total = len(recovery_items)
     rules_note = "rules ON" if use_rules else "rules OFF (AGENT_USE_RULES=0)"
     print(
-        f"\n[pass 2] {total} held-out items (recovery, learned examples, {rules_note}) ...",
+        f"\n[pass 2] {total} held-out items (recovery, learned examples, {rules_note}, "
+        f"adapter={adapter_name}) ...",
         flush=True,
     )
-    records = run_stream(recovery_items, base_config, use_rules=use_rules)
+    records = []
+    for i, item in enumerate(recovery_items, 1):
+        config = _active_config(base_config)
+        rec = _run_item(item, config, adapter_name, use_rules=use_rules)
+        if rec is None:
+            print(f"  [{i:>3}/{total}] SKIP", flush=True)
+            continue
+        append_event(rec)
+        records.append(rec)
+        mark = "✓" if rec.execution_accuracy == 1.0 else "✗"
+        print(
+            f"  [{i:>3}/{total}] [{item.difficulty:<6}] {mark}  {item.question[:55]}",
+            flush=True,
+        )
     return records
 
 
@@ -667,10 +685,10 @@ def _print_comparison(
     print("=" * 60, flush=True)
 
 
-def probe_relevance(items: list[FeedItem]) -> None:
+def probe_relevance(items: list[FeedItem], adapter_name: str = "spider") -> None:
     """Cheap with/without probe: runs unique held-out questions twice (no events.jsonl writes).
 
-    Uses gold SQL from same-DB LEARN questions as examples (zero teacher API calls).
+    Uses gold SQL/code from same-DB LEARN questions as examples (zero teacher API calls).
     This isolates "does schema-relevant injection help?" from teacher quality.
     Typically ~22 agent calls (2 × 11 unique held-out Qs) vs 240 for a full run.
     """
@@ -684,7 +702,7 @@ def probe_relevance(items: list[FeedItem]) -> None:
             unique_heldout.append(it)
             seen_ids.add(it.question_id)
 
-    # Build same-DB LEARN examples (gold SQL) per db_id — unique questions only
+    # Build same-DB LEARN examples (gold) per db_id — unique questions only
     heldout_ids = {it.question_id for it in unique_heldout}
     learn_by_db: dict[str, list[FeedItem]] = {}
     seen_learn: dict[str, set[str]] = {}
@@ -700,7 +718,7 @@ def probe_relevance(items: list[FeedItem]) -> None:
     total = len(unique_heldout)
     print(
         f"\n[probe] {total} unique held-out questions × 2 passes "
-        f"({total * 2} agent calls, no events.jsonl writes)",
+        f"({total * 2} agent calls, adapter={adapter_name}, no events.jsonl writes)",
         flush=True,
     )
 
@@ -709,7 +727,7 @@ def probe_relevance(items: list[FeedItem]) -> None:
 
     for i, it in enumerate(unique_heldout, 1):
         # WITHOUT — base config, no examples, no knowledge-graph rules
-        rec_wo = run_item(it, base_config, use_rules=False)
+        rec_wo = _run_item(it, base_config, adapter_name, use_rules=False)
         if rec_wo is not None:
             without_accs[it.question_id] = rec_wo.execution_accuracy
             mark_wo = "✓" if rec_wo.execution_accuracy == 1.0 else "✗"
@@ -722,12 +740,12 @@ def probe_relevance(items: list[FeedItem]) -> None:
             FewShotExample(
                 question=l.question, correct_sql=l.gold_sql, db_id=l.db_id, source="gold"
             )
-            for l in same_db
+            for l in same_db[:4]
         ]
         cfg_with = AgentConfig(
             config_id="probe-with", model=_BASE_MODEL, few_shot_examples=examples
         )
-        rec_w = run_item(it, cfg_with)
+        rec_w = _run_item(it, cfg_with, adapter_name)
         if rec_w is not None:
             with_accs[it.question_id] = rec_w.execution_accuracy
             mark_w = "✓" if rec_w.execution_accuracy == 1.0 else "✗"
@@ -835,12 +853,12 @@ def run_full_loop(
         "\n[orchestrator] Measuring base (no-correction) accuracy on held-out pool ...",
         flush=True,
     )
-    base_accs = dry_run_heldout(items)
+    base_accs = dry_run_heldout(items, adapter_name=adapter_name)
 
     # -------------------------------------------------------------------------
     # Pass 2: recovery — agent reads CorrectionAction via _active_config
     # -------------------------------------------------------------------------
-    recovery_records = _pass2(items, base_config)
+    recovery_records = _pass2(items, base_config, adapter_name=adapter_name)
 
     # -------------------------------------------------------------------------
     # Print the improvement claim (hard bucket is the benchmark — see plan 006)
@@ -1045,7 +1063,7 @@ if __name__ == "__main__":
         items = _build_feed(args.n, full=True, adapter_name=args.adapter)
 
     if args.significance:
-        significance_run(items)
+        significance_run(items, adapter_name=args.adapter)
         sys.exit(0)
 
     if args.ceiling:
@@ -1053,11 +1071,11 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.dry_run_heldout:
-        dry_run_heldout(items)
+        dry_run_heldout(items, adapter_name=args.adapter)
         sys.exit(0)
 
     if args.probe:
-        probe_relevance(items)
+        probe_relevance(items, adapter_name=args.adapter)
         sys.exit(0)
 
     if args.dry_run_degraded:
@@ -1065,9 +1083,10 @@ if __name__ == "__main__":
         degraded = [it for it in items if it.phase == "degraded"]
         total = len(degraded)
         accs: list[float] = []
-        print(f"[dry-run-degraded] {total} degraded items, base config ...", flush=True)
+        print(f"[dry-run-degraded] {total} degraded items, base config, "
+              f"adapter={args.adapter} ...", flush=True)
         for i, item in enumerate(degraded, 1):
-            rec = run_item(item, base_cfg, use_rules=False)
+            rec = _run_item(item, base_cfg, args.adapter, use_rules=False)
             if rec is None:
                 print(f"  [{i:>3}/{total}] SKIP (gold failed)", flush=True)
                 continue

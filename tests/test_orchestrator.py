@@ -128,11 +128,11 @@ class TestDryRunHeldout:
         items = _make_mixed_items(n_baseline=3, n_recovery=4)
         called_phases = []
 
-        def fake_run(item, config, use_rules=True):
+        def fake_run(item, config, adapter_name="spider", use_rules=True):
             called_phases.append(item.phase)
             return _make_record(0.5)
 
-        with patch("orchestrator.run_item", side_effect=fake_run):
+        with patch("orchestrator._run_item", side_effect=fake_run):
             dry_run_heldout(items)
 
         assert all(p == "recovery" for p in called_phases)
@@ -142,11 +142,11 @@ class TestDryRunHeldout:
         items = _make_mixed_items(n_recovery=2)
         seen_configs: list[AgentConfig] = []
 
-        def fake_run(item, config, use_rules=True):
+        def fake_run(item, config, adapter_name="spider", use_rules=True):
             seen_configs.append(config)
             return _make_record(1.0)
 
-        with patch("orchestrator.run_item", side_effect=fake_run):
+        with patch("orchestrator._run_item", side_effect=fake_run):
             dry_run_heldout(items)
 
         assert all(len(c.few_shot_examples) == 0 for c in seen_configs), (
@@ -158,7 +158,7 @@ class TestDryRunHeldout:
         items = _make_mixed_items(n_recovery=4)
         records = [_make_record(1.0), _make_record(0.0), _make_record(1.0), _make_record(0.0)]
 
-        with patch("orchestrator.run_item", side_effect=records):
+        with patch("orchestrator._run_item", side_effect=records):
             result = dry_run_heldout(items)
 
         assert result["overall"] == pytest.approx(0.5)
@@ -168,7 +168,7 @@ class TestDryRunHeldout:
         # gold-SQL failure (None), then one correct, one wrong
         records = [None, _make_record(1.0), _make_record(0.0)]
 
-        with patch("orchestrator.run_item", side_effect=records):
+        with patch("orchestrator._run_item", side_effect=records):
             result = dry_run_heldout(items)
 
         # only 2 scored: (1.0 + 0.0) / 2 = 0.5
@@ -176,7 +176,7 @@ class TestDryRunHeldout:
 
     def test_all_skipped_returns_zero(self):
         items = _make_mixed_items(n_recovery=3)
-        with patch("orchestrator.run_item", return_value=None):
+        with patch("orchestrator._run_item", return_value=None):
             result = dry_run_heldout(items)
         assert result["overall"] == 0.0
 
@@ -185,11 +185,11 @@ class TestDryRunHeldout:
         custom = AgentConfig(config_id="custom-test", model="test-model", few_shot_examples=[])
         seen: list[AgentConfig] = []
 
-        def fake_run(item, config, use_rules=True):
+        def fake_run(item, config, adapter_name="spider", use_rules=True):
             seen.append(config)
             return _make_record(1.0)
 
-        with patch("orchestrator.run_item", side_effect=fake_run):
+        with patch("orchestrator._run_item", side_effect=fake_run):
             dry_run_heldout(items, config=custom)
 
         assert len(seen) == 1
@@ -199,11 +199,11 @@ class TestDryRunHeldout:
         items = _make_mixed_items(n_recovery=1)
         seen: list[AgentConfig] = []
 
-        def fake_run(item, config, use_rules=True):
+        def fake_run(item, config, adapter_name="spider", use_rules=True):
             seen.append(config)
             return _make_record(0.0)
 
-        with patch("orchestrator.run_item", side_effect=fake_run):
+        with patch("orchestrator._run_item", side_effect=fake_run):
             dry_run_heldout(items)
 
         # _BASE_MODEL honors the AGENT_MODEL env override, so assert against it
@@ -215,7 +215,7 @@ class TestDryRunHeldout:
         items = _make_mixed_items(n_recovery=2)
         records = [_make_record(0.8), _make_record(0.4)]
 
-        with patch("orchestrator.run_item", side_effect=records):
+        with patch("orchestrator._run_item", side_effect=records):
             result = dry_run_heldout(items)
 
         assert isinstance(result, dict)
@@ -230,14 +230,14 @@ class TestDryRunHeldout:
             _make_record(1.0, "hard"),
             _make_record(0.0, "extra"),
         ]
-        with patch("orchestrator.run_item", side_effect=records):
+        with patch("orchestrator._run_item", side_effect=records):
             result = dry_run_heldout(items)
         # hard bucket: (1.0 + 1.0)/2 = 1.0; extra bucket: 0.0
         assert "hard" in result or "extra" in result  # at least one difficulty key
 
     def test_no_recovery_items_returns_zero_overall(self):
         items = [_make_item("baseline", "easy", i) for i in range(3)]
-        with patch("orchestrator.run_item") as mock_run:
+        with patch("orchestrator._run_item") as mock_run:
             result = dry_run_heldout(items)
         mock_run.assert_not_called()
         assert result["overall"] == 0.0
