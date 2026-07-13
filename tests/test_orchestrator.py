@@ -35,8 +35,8 @@ def _make_item(phase: str, difficulty: str = "hard", idx: int = 0) -> FeedItem:
     return FeedItem(
         question_id=f"q_{phase}_{idx}",
         question=f"question {idx}",
-        gold_sql="SELECT COUNT(*) FROM t",
-        db_id="db",
+        gold_output="SELECT COUNT(*) FROM t",
+        domain_id="db",
         difficulty=difficulty,
         phase=phase,
     )

@@ -21,8 +21,8 @@ from typing import Iterator
 class FeedItem:
     question_id: str
     question: str
-    gold_sql: str
-    db_id: str
+    gold_output: str  # gold SQL / code / answer (domain-specific)
+    domain_id: str  # Spider db_id, coding topic, etc.
     difficulty: str
     phase: str   # "baseline" | "degraded" | "recovery"
 
@@ -125,8 +125,8 @@ def build_stream(
             FeedItem(
                 question_id=q["id"],
                 question=q["question"],
-                gold_sql=q["expected_sql"],
-                db_id=q["db_id"],
+                gold_output=q["expected_sql"],
+                domain_id=q["db_id"],
                 difficulty=q["difficulty"],
                 phase=phase,
             )
@@ -178,8 +178,8 @@ def build_continuous_stream(
             FeedItem(
                 question_id=q["id"],
                 question=q["question"],
-                gold_sql=q["expected_sql"],
-                db_id=q["db_id"],
+                gold_output=q["expected_sql"],
+                domain_id=q["db_id"],
                 difficulty=q["difficulty"],
                 phase=phase,
             )

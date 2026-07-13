@@ -30,9 +30,9 @@ def _case(idx: int = 0, difficulty: str = "hard") -> FailingCase:
     return FailingCase(
         run_id=f"run_{idx:04d}",
         question=f"question {idx}",
-        db_id="test_db",
-        broken_sql="SELECT bad",
-        gold_sql=f"SELECT gold_{idx} FROM t",
+        domain_id="test_db",
+        broken_output="SELECT bad",
+        gold_output=f"SELECT gold_{idx} FROM t",
         difficulty=difficulty,
     )
 
@@ -42,11 +42,11 @@ def _fake_make_examples(failing_cases, anchor_cases=(), **kwargs):
     examples = []
     for c in failing_cases:
         examples.append(FewShotExample(
-            question=c.question, correct_sql=c.gold_sql, db_id=c.db_id, source="gold"
+            question=c.question, correct_output=c.gold_output, domain_id=c.domain_id, source="gold"
         ))
     for c in anchor_cases:
         examples.append(FewShotExample(
-            question=c.question, correct_sql=c.gold_sql, db_id=c.db_id, source="anchor"
+            question=c.question, correct_output=c.gold_output, domain_id=c.domain_id, source="anchor"
         ))
     return examples
 

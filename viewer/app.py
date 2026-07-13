@@ -99,7 +99,7 @@ def build_state(path: Path | str = None, window: int = WINDOW) -> dict:
             same_db_active = 0
             if active_examples:
                 same_db_active = sum(
-                    1 for e in active_examples if e.get("db_id") == ev.db_id
+                    1 for e in active_examples if e.get("domain_id", e.get("db_id")) == ev.domain_id
                 )
 
             runs.append({
@@ -120,8 +120,8 @@ def build_state(path: Path | str = None, window: int = WINDOW) -> dict:
                 "latency_ms": _mean(lats[-window:]),
                 # example panel
                 "question": ev.question,
-                "generated_sql": ev.generated_sql,
-                "db_id": ev.db_id,
+                "generated_output": ev.generated_output,
+                "domain_id": ev.domain_id,
                 "verdict": _verdict(ev),
                 "same_db_examples_active": same_db_active,
             })

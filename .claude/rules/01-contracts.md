@@ -1,19 +1,24 @@
-# LOCKED RULE: Data contracts (schemas are FROZEN)
+# LOCKED RULE: Data contracts (canonical names + legacy aliases)
 
-**`contracts/schemas.py` is frozen as of hour 1.** It is the single shared file every stage depends on.
+**`contracts/schemas.py` is the single shared dependency of all four stages.**
 
-- **Do NOT edit it without announcing to the whole team first.** A silent change here breaks all four stages and the integration.
-- If a field genuinely must change: stop, post in the team channel, get agreement, change it once, everyone re-pulls.
-- Treat the Pydantic models as the source of truth. Import them; never redefine a record shape locally.
+Canonical field names are **domain-agnostic** (`generated_output`, `correct_output`,
+`domain_id`, `invalid_output`). Legacy SQL-shaped keys (`generated_sql`, `correct_sql`,
+`db_id`, `invalid_sql`) remain accepted on **input** via Pydantic validation aliases so
+historical `events.jsonl` and fixtures still load.
 
-## The records (see schemas.py for the authoritative definition)
-- `AgentConfig` — the agent's current state. `few_shot_examples` starts empty and grows via correction.
-- `TelemetryRecord` — one agent run. Carries the channels (accuracy, validity, complexity, latency, tokens), the Spider `difficulty` label, and the question/SQL for the viewer.
-- `DriftEvent` — emitted by the detector. Carries which channel drifted, severity, the windowed vs baseline means, and a `failure_mode` tag.
-- `CorrectionAction` — emitted by correction. Carries the `new_few_shot_examples` the agent should learn from.
+- Prefer the canonical names in new code.
+- Do not redefine record shapes locally — import from `contracts.schemas`.
+- If a field must change again: announce, change once, everyone re-pulls.
+
+## The records
+- `AgentConfig` — `few_shot_examples` starts empty and grows via correction.
+- `TelemetryRecord` — one agent run (channels + question/output for the viewer).
+- `DriftEvent` — windowed drift + `failure_mode` + `failing_run_ids`.
+- `CorrectionAction` — `new_few_shot_examples` the agent should learn from.
 
 ## Why `difficulty` is on every record
-Stratifying accuracy by difficulty is what makes the improvement claim defensible ("hard-bucket accuracy went 40%→80%, same difficulty"). Never drop it.
+Stratifying accuracy by difficulty makes the improvement claim defensible.
 
 ## Event log helper
-Use `contracts/eventlog.py` (`append_event`, `read_events`, `tail_events`) to read/write `events.jsonl`. Don't hand-roll JSON line formats.
+Use `contracts/eventlog.py` (`append_event`, `read_events`, `tail_events`).

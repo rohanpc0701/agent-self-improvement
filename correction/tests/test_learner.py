@@ -18,9 +18,9 @@ def _case(idx: int = 0, difficulty: str = "hard") -> FailingCase:
     return FailingCase(
         run_id=f"run_{idx:04d}",
         question=f"question {idx}",
-        db_id="test_db",
-        broken_sql="SELECT bad FROM table",
-        gold_sql=f"SELECT gold_{idx} FROM table",
+        domain_id="test_db",
+        broken_output="SELECT bad FROM table",
+        gold_output=f"SELECT gold_{idx} FROM table",
         difficulty=difficulty,
     )
 
@@ -54,7 +54,7 @@ class TestMakeExamples:
         )
         assert len(examples) == 1
         assert examples[0].source == "teacher"
-        assert examples[0].correct_sql == teacher_sql
+        assert examples[0].correct_output == teacher_sql
 
     def test_teacher_miss_falls_back_to_gold(self):
         db, schema, acc = _noop_infra(accuracy=0.0)
@@ -66,7 +66,7 @@ class TestMakeExamples:
         )
         assert len(examples) == 1
         assert examples[0].source == "gold"
-        assert examples[0].correct_sql == case.gold_sql
+        assert examples[0].correct_output == case.gold_output
 
     def test_teacher_none_accuracy_falls_back_to_gold(self):
         # execution_accuracy returning None means gold SQL failed; treat as mismatch
@@ -93,7 +93,7 @@ class TestMakeExamples:
         )
         assert len(examples) == 1
         assert examples[0].source == "gold"
-        assert examples[0].correct_sql == case.gold_sql
+        assert examples[0].correct_output == case.gold_output
 
     def test_anchor_cases_appended_as_anchor_source(self):
         db, schema, acc = _noop_infra(accuracy=1.0)
@@ -118,7 +118,7 @@ class TestMakeExamples:
             teacher=lambda q, s: "SELECT x FROM t",
             _get_db_path=db, _schema_text=schema, _execution_accuracy=acc,
         )
-        assert examples[0].correct_sql == anchor.gold_sql
+        assert examples[0].correct_output == anchor.gold_output
 
     def test_empty_inputs_returns_empty_list(self):
         db, schema, acc = _noop_infra()
@@ -142,15 +142,15 @@ class TestMakeExamples:
     def test_db_id_propagated_to_example(self):
         db, schema, acc = _noop_infra(accuracy=1.0)
         case = FailingCase(
-            run_id="r0", question="q", db_id="my_database",
-            broken_sql="SELECT bad", gold_sql="SELECT good", difficulty="hard"
+            run_id="r0", question="q", domain_id="my_database",
+            broken_output="SELECT bad", gold_output="SELECT good", difficulty="hard"
         )
         examples = make_examples(
             [case],
             teacher=lambda q, s: "SELECT good",
             _get_db_path=db, _schema_text=schema, _execution_accuracy=acc,
         )
-        assert examples[0].db_id == "my_database"
+        assert examples[0].domain_id == "my_database"
 
     def test_question_propagated_to_example(self):
         db, schema, acc = _noop_infra(accuracy=1.0)

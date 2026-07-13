@@ -141,12 +141,12 @@ class _State(Enum):
 def _is_outage_record(record: TelemetryRecord) -> bool:
     """True when the record is a harness API-error, not a model failure.
 
-    Distinguishable because the harness emits generated_sql="-- error: ..." on
+    Distinguishable because the harness emits generated_output="-- error: ..." on
     network/API exceptions, while real invalid SQL is the model's actual broken
     query. Outage records are excluded from windows and warmup buffers entirely
     so transient outages cannot trigger false drift events.
     """
-    return not record.query_valid and record.generated_sql.startswith(OUTAGE_SQL_PREFIX)
+    return not record.query_valid and record.generated_output.startswith(OUTAGE_SQL_PREFIX)
 
 
 def _classify_failure(record: TelemetryRecord) -> FailureMode:
@@ -159,7 +159,7 @@ def _classify_failure(record: TelemetryRecord) -> FailureMode:
     """
     if record.execution_accuracy != 0.0:
         return FailureMode.NONE
-    return FailureMode.INVALID_SQL if not record.query_valid else FailureMode.VALID_BUT_WRONG
+    return FailureMode.INVALID_OUTPUT if not record.query_valid else FailureMode.VALID_BUT_WRONG
 
 
 class Detector:

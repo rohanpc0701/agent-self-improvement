@@ -21,9 +21,9 @@ class FailingCase:
     """
     run_id: str
     question: str
-    db_id: str
-    broken_sql: str
-    gold_sql: str
+    domain_id: str
+    broken_output: str
+    gold_output: str
     difficulty: str
 
 
@@ -62,40 +62,40 @@ def make_examples(
     examples: list[FewShotExample] = []
 
     for case in failing_cases:
-        db_path = _get_db_path(case.db_id)
+        db_path = _get_db_path(case.domain_id)
         schema = _schema_text(db_path)
         try:
             teacher_sql = teacher(case.question, schema)
-            acc = _execution_accuracy(teacher_sql, case.gold_sql, db_path)
+            acc = _execution_accuracy(teacher_sql, case.gold_output, db_path)
             if acc == 1.0:
                 examples.append(FewShotExample(
                     question=case.question,
-                    correct_sql=teacher_sql,
-                    db_id=case.db_id,
+                    correct_output=teacher_sql,
+                    domain_id=case.domain_id,
                     source="teacher",
                 ))
             else:
                 # teacher missed (wrong result or non-None accuracy < 1) — use gold
                 examples.append(FewShotExample(
                     question=case.question,
-                    correct_sql=case.gold_sql,
-                    db_id=case.db_id,
+                    correct_output=case.gold_output,
+                    domain_id=case.domain_id,
                     source="gold",
                 ))
         except Exception:
             # teacher call failed entirely — fall back to gold
             examples.append(FewShotExample(
                 question=case.question,
-                correct_sql=case.gold_sql,
-                db_id=case.db_id,
+                correct_output=case.gold_output,
+                domain_id=case.domain_id,
                 source="gold",
             ))
 
     for case in anchor_cases:
         examples.append(FewShotExample(
             question=case.question,
-            correct_sql=case.gold_sql,
-            db_id=case.db_id,
+            correct_output=case.gold_output,
+            domain_id=case.domain_id,
             source="anchor",
         ))
 

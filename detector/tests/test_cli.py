@@ -44,7 +44,7 @@ def _make_rec(i: int, acc: float = 1.0, valid: bool = True) -> TelemetryRecord:
         difficulty=Difficulty.EASY,
         execution_accuracy=acc,
         query_valid=valid,
-        generated_sql="SELECT 1",
+        generated_output="SELECT 1",
     )
 
 

@@ -18,7 +18,7 @@ def merge_examples(
     order: list[tuple[str, str]] = []
 
     for ex in existing + new:
-        key = (ex.db_id or "", ex.question)
+        key = (ex.domain_id or "", ex.question)
         if key not in by_key:
             order.append(key)
         by_key[key] = ex

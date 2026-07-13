@@ -39,23 +39,23 @@ def distill_code(failed: FailedRun, fixed_code: str) -> CorrectionRule:
 def _distill_with_prompt(
     failed: FailedRun, fixed: str, *, domain: str
 ) -> CorrectionRule:
-    rule_id = f"rule:{failed.db_id}:{uuid.uuid4().hex[:8]}"
+    rule_id = f"rule:{failed.domain_id}:{uuid.uuid4().hex[:8]}"
     try:
         parsed = _call_model(failed, fixed, domain=domain)
         applies_to = [
-            f"schema:{failed.db_id}:{a}" if not a.startswith("schema:") else a
+            f"schema:{failed.domain_id}:{a}" if not a.startswith("schema:") else a
             for a in parsed.get("applies_to", [])
         ]
         return CorrectionRule(
             id=rule_id,
             scope="db",
-            db_id=failed.db_id,
+            db_id=failed.domain_id,
             trap=parsed["trap"],
             fix=parsed["fix"],
             trigger=parsed["trigger"],
             applies_to=applies_to,
             source="react_repair",
-            seen_dbs=[failed.db_id],
+            seen_dbs=[failed.domain_id],
         )
     except Exception as e:
         log.warning(
@@ -97,10 +97,10 @@ def _call_model(failed: FailedRun, fixed: str, *, domain: str = "sql") -> dict:
 
 Problem: {failed.question}
 Topic / tags:
-{schema or failed.db_id}
+{schema or failed.domain_id}
 
 Broken code:
-{failed.broken_sql}
+{failed.broken_output}
 
 Fixed code:
 {fixed}
@@ -121,7 +121,7 @@ Question: {failed.question}
 Schema:
 {schema}
 
-Broken SQL: {failed.broken_sql}
+Broken SQL: {failed.broken_output}
 Fixed SQL:  {fixed}
 Execution error: {failed.execution_error or "none"}
 
@@ -155,7 +155,7 @@ def _fallback(
     rule_id: str, failed: FailedRun, fixed: str, *, domain: str = "sql"
 ) -> CorrectionRule:
     tables = list(failed.schema.keys())
-    trigger = next((t for t in tables if t.lower() in fixed.lower()), failed.db_id)
+    trigger = next((t for t in tables if t.lower() in fixed.lower()), failed.domain_id)
     if domain == "code":
         trap = f"Incorrect algorithm / edge-case handling for {trigger}"
         fix = f"Prefer a solution structured like: {fixed[:240]}"
@@ -165,11 +165,11 @@ def _fallback(
     return CorrectionRule(
         id=rule_id,
         scope="db",
-        db_id=failed.db_id,
+        db_id=failed.domain_id,
         trap=trap,
         fix=fix,
         trigger=trigger,
-        applies_to=[f"schema:{failed.db_id}:{trigger}"],
+        applies_to=[f"schema:{failed.domain_id}:{trigger}"],
         source="react_repair",
-        seen_dbs=[failed.db_id],
+        seen_dbs=[failed.domain_id],
     )

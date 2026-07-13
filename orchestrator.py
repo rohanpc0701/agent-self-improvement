@@ -72,7 +72,7 @@ def ceiling_run(items: list[FeedItem]) -> dict[str, float]:
     )
 
     for i, item in enumerate(unique, 1):
-        db_path = get_db_path(item.db_id)
+        db_path = get_db_path(item.domain_id)
         schema = schema_text(db_path)
         try:
             sql = teacher_generate(item.question, schema)
@@ -80,7 +80,7 @@ def ceiling_run(items: list[FeedItem]) -> dict[str, float]:
             n_skipped += 1
             print(f"  [{i:>3}/{total}] [{item.difficulty:<6}] ERROR {e}", flush=True)
             continue
-        acc = eval_acc(sql, item.gold_sql, db_path)
+        acc = eval_acc(sql, item.gold_output, db_path)
         if acc is None:
             n_skipped += 1
             print(f"  [{i:>3}/{total}] [{item.difficulty:<6}] SKIP (gold failed)", flush=True)
@@ -331,7 +331,7 @@ def dry_run_heldout(
         rec = _run_item(item, config, adapter_name, use_rules=False)
         if rec is None:
             n_skipped += 1
-            print(f"  [{i:>3}/{total}] [{item.difficulty:<6}] SKIP (gold SQL failed)  "
+            print(f"  [{i:>3}/{total}] [{item.difficulty:<6}] SKIP (gold output failed)  "
                   f"{item.question[:55]}", flush=True)
             continue
         n_scored += 1
@@ -352,7 +352,7 @@ def dry_run_heldout(
 
     print(
         f"\n  overall : {overall:.3f}  "
-        f"({n_unique} unique q, {n_scored} runs, {n_skipped} skipped — gold SQL failed)"
+        f"({n_unique} unique q, {n_scored} runs, {n_skipped} skipped — gold output failed)"
     )
     for diff in ("easy", "medium", "hard", "extra"):
         if diff in result and diff in pairs_by_diff:
@@ -440,9 +440,9 @@ def _build_failing_cases(
         cases.append(FailingCase(
             run_id=run_id,
             question=rec.question or item.question,
-            db_id=rec.db_id or item.db_id,
-            broken_sql=rec.generated_sql,
-            gold_sql=item.gold_sql,
+            domain_id=rec.domain_id or item.domain_id,
+            broken_output=rec.generated_output,
+            gold_output=item.gold_output,
             difficulty=item.difficulty,
         ))
     return cases
@@ -470,12 +470,12 @@ def _harvest_failing_cases(
         if item.question_id in seen_questions:
             continue
         seen_questions.add(item.question_id)
-        by_db.setdefault(item.db_id, []).append(FailingCase(
+        by_db.setdefault(item.domain_id, []).append(FailingCase(
             run_id=rec.run_id,
             question=rec.question or item.question,
-            db_id=rec.db_id or item.db_id,
-            broken_sql=rec.generated_sql,
-            gold_sql=item.gold_sql,
+            domain_id=rec.domain_id or item.domain_id,
+            broken_output=rec.generated_output,
+            gold_output=item.gold_output,
             difficulty=item.difficulty,
         ))
 
@@ -526,14 +526,14 @@ def _write_rules_to_graph(
     n_written = 0
     for case in failing_cases[:max_cases]:
         try:
-            db_path = get_db_path(case.db_id)
-            expected = execute(case.gold_sql, db_path)
-            observed = execute(case.broken_sql, db_path)
+            db_path = get_db_path(case.domain_id)
+            expected = execute(case.gold_output, db_path)
+            observed = execute(case.broken_output, db_path)
             failed = FailedRun(
                 run_id=case.run_id,
-                db_id=case.db_id,
+                domain_id=case.domain_id,
                 question=case.question,
-                broken_sql=case.broken_sql,
+                broken_output=case.broken_output,
                 expected_result=expected[:5] if expected else None,
                 observed_result=observed[:5] if observed else None,
                 schema=_schema_dict(db_path),
@@ -561,9 +561,9 @@ def _pick_anchors(
             anchors.append(FailingCase(
                 run_id=rec.run_id,
                 question=rec.question or item.question,
-                db_id=rec.db_id or item.db_id,
-                broken_sql="",
-                gold_sql=item.gold_sql,
+                domain_id=rec.domain_id or item.domain_id,
+                broken_output="",
+                gold_output=item.gold_output,
                 difficulty=item.difficulty,
             ))
     return anchors
@@ -708,7 +708,7 @@ def probe_relevance(items: list[FeedItem], adapter_name: str = "spider") -> None
     seen_learn: dict[str, set[str]] = {}
     for it in items:
         if it.phase == "degraded" and it.question_id not in heldout_ids:
-            db = it.db_id
+            db = it.domain_id
             if db not in seen_learn:
                 seen_learn[db] = set()
             if it.question_id not in seen_learn[db]:
@@ -735,10 +735,10 @@ def probe_relevance(items: list[FeedItem], adapter_name: str = "spider") -> None
             mark_wo = "SKIP"
 
         # WITH — same-DB gold examples only (zero teacher calls)
-        same_db = learn_by_db.get(it.db_id, [])
+        same_db = learn_by_db.get(it.domain_id, [])
         examples = [
             FewShotExample(
-                question=l.question, correct_sql=l.gold_sql, db_id=l.db_id, source="gold"
+                question=l.question, correct_output=l.gold_output, domain_id=l.domain_id, source="gold"
             )
             for l in same_db[:4]
         ]
@@ -754,7 +754,7 @@ def probe_relevance(items: list[FeedItem], adapter_name: str = "spider") -> None
 
         n_ex = len(examples)
         print(
-            f"  [{i:>2}/{total}] [{it.db_id:<32}] [{it.difficulty:<6}] "
+            f"  [{i:>2}/{total}] [{it.domain_id:<32}] [{it.difficulty:<6}] "
             f"NO-EX:{mark_wo}  +{n_ex}ex:{mark_w}  {it.question[:40]}",
             flush=True,
         )
@@ -821,9 +821,9 @@ def run_full_loop(
         if not failing_cases:
             failing_cases = _build_failing_cases(drift_event, run_id_map)
         anchor_cases = _pick_anchors(baseline_items, baseline_recs)
-        n_dbs = len({c.db_id for c in failing_cases})
+        n_dbs = len({c.domain_id for c in failing_cases})
         print(
-            f"  {len(failing_cases)} failing cases across {n_dbs} schemas, "
+            f"  {len(failing_cases)} failing cases across {n_dbs} domains, "
             f"{len(anchor_cases)} anchors",
             flush=True,
         )

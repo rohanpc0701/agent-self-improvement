@@ -73,9 +73,9 @@ class TestCodingRulesAndTeacher:
         case = FailingCase(
             run_id=f"{p['id']}_deadbeef",
             question=p["question"],
-            broken_sql="def climb_stairs(n):\n    return n\n",
-            gold_sql=p["gold_solution"],
-            db_id=p["topic"],
+            broken_output="def climb_stairs(n):\n    return n\n",
+            gold_output=p["gold_solution"],
+            domain_id=p["topic"],
             difficulty="hard",
         )
         ev = DriftEvent(
@@ -85,7 +85,7 @@ class TestCodingRulesAndTeacher:
             baseline_mean=1.0,
             window_mean=0.6,
             failing_run_ids=[case.run_id],
-            failure_mode=FailureMode.INVALID_SQL,
+            failure_mode=FailureMode.INVALID_OUTPUT,
         )
         n = write_graph_rules(ev, [case])
         assert n == 1

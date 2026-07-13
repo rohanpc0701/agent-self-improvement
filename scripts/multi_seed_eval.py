@@ -52,11 +52,11 @@ def probe_seed(seed: int, full: bool) -> tuple[float, float, float]:
     seen_learn: dict[str, set[str]] = {}
     for it in items:
         if it.phase == "degraded" and it.question_id not in heldout_ids:
-            if it.db_id not in seen_learn:
-                seen_learn[it.db_id] = set()
-            if it.question_id not in seen_learn[it.db_id]:
-                learn_by_db.setdefault(it.db_id, []).append(it)
-                seen_learn[it.db_id].add(it.question_id)
+            if it.domain_id not in seen_learn:
+                seen_learn[it.domain_id] = set()
+            if it.question_id not in seen_learn[it.domain_id]:
+                learn_by_db.setdefault(it.domain_id, []).append(it)
+                seen_learn[it.domain_id].add(it.question_id)
 
     wo_pairs: list[tuple[str, float]] = []
     w_pairs: list[tuple[str, float]] = []
@@ -65,8 +65,8 @@ def probe_seed(seed: int, full: bool) -> tuple[float, float, float]:
         if rec_wo is None:
             continue
         examples = [
-            FewShotExample(question=l.question, correct_sql=l.gold_sql, db_id=l.db_id, source="gold")
-            for l in learn_by_db.get(it.db_id, [])
+            FewShotExample(question=l.question, correct_output=l.gold_output, domain_id=l.domain_id, source="gold")
+            for l in learn_by_db.get(it.domain_id, [])
         ]
         cfg_w = base.model_copy(update={"few_shot_examples": examples})
         rec_w = run_item(it, cfg_w, use_rules=False)

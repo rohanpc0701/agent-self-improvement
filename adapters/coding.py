@@ -65,12 +65,12 @@ def _strip_think(text: str) -> str:
 
 
 def _examples_block(examples: list[FewShotExample], topic: str) -> str:
-    same = [e for e in examples if not e.db_id or e.db_id == topic][:3]
+    same = [e for e in examples if not e.domain_id or e.domain_id == topic][:3]
     if not same:
         return ""
     lines = ["Similar solved problems:"]
     for ex in same:
-        lines.append(f"Problem: {ex.question}\n```python\n{ex.correct_sql}\n```")
+        lines.append(f"Problem: {ex.question}\n```python\n{ex.correct_output}\n```")
     return "\n\n".join(lines) + "\n\n"
 
 
@@ -177,22 +177,22 @@ def write_graph_rules(
         try:
             qid = case.run_id.rsplit("_", 1)[0]
             problem = idx.get(qid)
-            fn = problem["function_name"] if problem else case.db_id
+            fn = problem["function_name"] if problem else case.domain_id
             # Gold is always unit-test correct; teacher already ran in make_examples.
-            fixed = case.gold_sql
+            fixed = case.gold_output
 
             failed = FailedRun(
                 run_id=case.run_id,
-                db_id=case.db_id,
+                domain_id=case.domain_id,
                 question=case.question,
-                broken_sql=case.broken_sql,
-                schema={case.db_id: [fn, "algorithm", "edge_cases"]},
+                broken_output=case.broken_output,
+                schema={case.domain_id: [fn, "algorithm", "edge_cases"]},
             )
             rule = distill_code(failed, fixed)
             if fn and fn.lower() not in rule.trigger.lower():
                 rule.trigger = fn
-            rule.applies_to = list({*rule.applies_to, f"schema:{case.db_id}:{fn}"})
-            rule.seen_dbs = [case.db_id]
+            rule.applies_to = list({*rule.applies_to, f"schema:{case.domain_id}:{fn}"})
+            rule.seen_dbs = [case.domain_id]
             add_rule(rule)
             maybe_promote(rule)
             n_written += 1
@@ -244,7 +244,7 @@ class CodingAdapter:
             return None
 
         text, tokens, latency_ms, reasoning = generate_code(
-            item.question, config, topic=item.db_id, use_rules=use_rules
+            item.question, config, topic=item.domain_id, use_rules=use_rules
         )
         code = extract_python_code(text)
         acc, valid, _err = verify_solution(text, problem)
@@ -259,8 +259,8 @@ class CodingAdapter:
             latency_ms=latency_ms,
             tokens=tokens,
             question=item.question,
-            generated_sql=code or text,
-            db_id=item.db_id,
+            generated_output=code or text,
+            db_id=item.domain_id,
             config_id=config.config_id,
             reasoning=reasoning,
         )
@@ -277,11 +277,11 @@ class CodingAdapter:
         for case in failing_cases:
             qid = case.run_id.rsplit("_", 1)[0]
             problem_rec = idx.get(qid)
-            gold = case.gold_sql
+            gold = case.gold_output
             source = "gold"
 
             if problem_rec is not None:
-                teacher_code = _teacher_repair(problem_rec, case.broken_sql)
+                teacher_code = _teacher_repair(problem_rec, case.broken_output)
                 if teacher_code:
                     acc, _, _ = execution_accuracy(
                         teacher_code,
@@ -294,16 +294,16 @@ class CodingAdapter:
 
             examples.append(FewShotExample(
                 question=case.question,
-                correct_sql=gold,
-                db_id=case.db_id,
+                correct_output=gold,
+                domain_id=case.domain_id,
                 source=source,
             ))
 
         for case in anchor_cases:
             examples.append(FewShotExample(
                 question=case.question,
-                correct_sql=case.gold_sql,
-                db_id=case.db_id,
+                correct_output=case.gold_output,
+                domain_id=case.domain_id,
                 source="anchor",
             ))
         return examples

@@ -186,8 +186,8 @@ def _record(i: int, difficulty: Difficulty, acc_p: float, valid_p: float,
         latency_ms=random.uniform(300, 1200),
         tokens=random.randint(80, 400),
         question=q,
-        generated_sql=sql,
-        db_id=v["db"],
+        generated_output=sql,
+        domain_id=v["db"],
         config_id="c0",
     )
 
@@ -234,7 +234,7 @@ def main() -> None:
     correction = CorrectionAction(
         triggered_by="execution_accuracy",
         new_few_shot_examples=[
-            FewShotExample(question=q, correct_sql=SQL[q]["correct"], db_id=SQL[q]["db"])
+            FewShotExample(question=q, correct_output=SQL[q]["correct"], domain_id=SQL[q]["db"])
             for q in HARD_Q
         ],
         rationale="Learned 8 hard-query failures via teacher; distilled into 3 few-shot examples "

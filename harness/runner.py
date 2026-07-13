@@ -42,18 +42,18 @@ def run_item(
     WITHOUT-corrections measurement passes.
     """
     import sys
-    db_path = get_db_path(item.db_id)
+    db_path = get_db_path(item.domain_id)
     schema = schema_text(db_path)
     sql, tokens, latency_ms, reasoning = agent.generate_sql(
-        item.question, schema, config, db_id=item.db_id, use_rules=use_rules
+        item.question, schema, config, db_id=item.domain_id, use_rules=use_rules
     )
-    acc = evaluator.execution_accuracy(sql, item.gold_sql, db_path)
+    acc = evaluator.execution_accuracy(sql, item.gold_output, db_path)
     if acc is None:
         print(f"  [SKIP] gold SQL failed for {item.question_id} — excluded from accuracy", file=sys.stderr)
         return None
     valid = evaluator.query_valid(sql, db_path)
     gen_cx = evaluator.complexity(sql)
-    req_cx = evaluator.complexity(item.gold_sql)
+    req_cx = evaluator.complexity(item.gold_output)
     return TelemetryRecord(
         run_id=f"{item.question_id}_{uuid.uuid4().hex[:8]}",
         timestamp=time.time(),
@@ -65,8 +65,8 @@ def run_item(
         latency_ms=latency_ms,
         tokens=tokens,
         question=item.question,
-        generated_sql=sql,
-        db_id=item.db_id,
+        generated_output=sql,
+        db_id=item.domain_id,
         config_id=config.config_id,
         reasoning=reasoning,
     )
@@ -126,6 +126,6 @@ if __name__ == "__main__":
     for phase, accs in phase_accs.items():
         avg = sum(accs) / len(accs)
         print(f"  {phase}: {avg:.2f} avg accuracy ({len(accs)} runs, Spider EX metric)")
-    api_errors = sum(1 for r in records if r.generated_sql.startswith("-- error:"))
+    api_errors = sum(1 for r in records if r.generated_output.startswith("-- error:"))
     if api_errors:
         print(f"  WARNING: {api_errors} API-error records (outage, not drift) — query_valid=False on these")

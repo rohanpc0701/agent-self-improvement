@@ -105,6 +105,13 @@ def _load_failing_cases(path: str) -> list[FailingCase]:
             if not line:
                 continue
             obj = json.loads(line)
+            # Accept legacy SQL-shaped keys from fixtures / older dumps
+            if "domain_id" not in obj and "db_id" in obj:
+                obj["domain_id"] = obj.pop("db_id")
+            if "broken_output" not in obj and "broken_sql" in obj:
+                obj["broken_output"] = obj.pop("broken_sql")
+            if "gold_output" not in obj and "gold_sql" in obj:
+                obj["gold_output"] = obj.pop("gold_sql")
             cases.append(FailingCase(**obj))
     return cases
 
@@ -159,7 +166,7 @@ if __name__ == "__main__":
     print(f"  n_examples        : {len(action.new_few_shot_examples)}")
     for i, ex in enumerate(action.new_few_shot_examples):
         print(f"  [{i}] [{ex.source:<8}] {ex.question[:55]}")
-        print(f"        SQL: {ex.correct_sql[:80]}")
+        print(f"        SQL: {ex.correct_output[:80]}")
     print(f"  rationale         : {action.rationale}")
 
     if args.append_log:

@@ -44,7 +44,7 @@ def _make_rec(
         difficulty=difficulty,
         execution_accuracy=acc,
         query_valid=valid,
-        generated_sql=sql,
+        generated_output=sql,
     )
 
 
@@ -575,7 +575,7 @@ class TestFailureMode:
         assert _classify_failure(_make_rec(0, acc=0.5, valid=True)) == FailureMode.NONE
 
     def test_classify_invalid_sql_zero_acc(self):
-        assert _classify_failure(_make_rec(0, acc=0.0, valid=False)) == FailureMode.INVALID_SQL
+        assert _classify_failure(_make_rec(0, acc=0.0, valid=False)) == FailureMode.INVALID_OUTPUT
 
     def test_classify_valid_but_wrong(self):
         assert _classify_failure(_make_rec(0, acc=0.0, valid=True)) == FailureMode.VALID_BUT_WRONG
@@ -604,7 +604,7 @@ class TestFailureMode:
         recs = [_make_rec(i, acc=0.0, valid=False) for i in range(5)]
         det = self._det_with_window(recs)
         mode, ids = det._diagnose_failures()
-        assert mode == FailureMode.INVALID_SQL
+        assert mode == FailureMode.INVALID_OUTPUT
         assert set(ids) == {r.run_id for r in recs}
 
     def test_diagnose_all_valid_wrong(self):
@@ -622,7 +622,7 @@ class TestFailureMode:
         )
         det = self._det_with_window(recs)
         mode, ids = det._diagnose_failures()
-        assert mode == FailureMode.INVALID_SQL
+        assert mode == FailureMode.INVALID_OUTPUT
         dom_ids = [r.run_id for r in recs[:3]]
         assert ids[:3] == dom_ids  # dominant ids come first
 

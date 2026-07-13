@@ -35,13 +35,13 @@ def on_drift_event(
 
     fixed_sql = repair(failed, db_path=db_path)
 
-    if fixed_sql == failed.broken_sql:
+    if fixed_sql == failed.broken_output:
         log.warning("on_drift: repair produced no improvement for run %s — skipping rule write",
                     failed.run_id)
         return None
 
     rule = distill(failed, fixed_sql)
-    rule.seen_dbs = [failed.db_id]
+    rule.seen_dbs = [failed.domain_id]
 
     add_rule(rule)
     maybe_promote(rule)

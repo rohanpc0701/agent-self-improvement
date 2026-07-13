@@ -38,7 +38,7 @@ def _get_client() -> OpenAI:
 
 def repair(failed: FailedRun, db_path: Optional[Path] = None) -> str:
     """Run a ReAct loop (max 3 iters) and return the best corrected SQL."""
-    best_sql = failed.broken_sql
+    best_sql = failed.broken_output
     history: list[str] = []
 
     for iteration in range(1, _MAX_ITERS + 1):
@@ -64,7 +64,7 @@ def repair(failed: FailedRun, db_path: Optional[Path] = None) -> str:
             if sql_candidate.strip().upper().startswith("SELECT"):
                 return best_sql
 
-    if best_sql == failed.broken_sql:
+    if best_sql == failed.broken_output:
         log.warning("repair: could not improve SQL for run %s (returning broken_sql unchanged)",
                     failed.run_id)
     return best_sql
@@ -100,7 +100,7 @@ Schema:
 {_schema_text(failed.schema)}
 
 Question: {failed.question}
-Broken SQL: {failed.broken_sql}
+Broken SQL: {failed.broken_output}
 Execution error: {failed.execution_error or "none"}
 Expected result (sample): {exp}
 Observed result (sample): {obs}

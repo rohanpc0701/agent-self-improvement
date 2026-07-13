@@ -9,7 +9,7 @@ from harness.feed import build_continuous_stream
 
 
 def _ex(q: str, db: str = "db1") -> FewShotExample:
-    return FewShotExample(question=q, correct_sql="SELECT 1", db_id=db, source="gold")
+    return FewShotExample(question=q, correct_output="SELECT 1", domain_id=db, source="gold")
 
 
 class TestMergeExamples:

@@ -278,8 +278,8 @@ class TestBuildStream:
             assert isinstance(item, FeedItem)
             assert item.question_id
             assert item.question
-            assert item.gold_sql
-            assert item.db_id
+            assert item.gold_output
+            assert item.domain_id
             assert item.difficulty in ("easy", "medium", "hard", "extra")
             assert item.phase in ("baseline", "degraded", "recovery")
 

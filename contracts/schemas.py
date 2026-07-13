@@ -1,20 +1,22 @@
 """
-FROZEN CONTRACT — do not edit without team agreement (see .claude/rules/01-contracts.md).
+Shared contracts for all stages.
 
-These Pydantic models are the single shared dependency of all four stages.
-Import them; never redefine a record shape locally.
+Domain-agnostic field names (output / domain_id) are canonical. Old SQL-shaped
+keys (generated_sql, correct_sql, db_id, invalid_sql) remain accepted on input
+via validation aliases so historical events.jsonl still loads.
 
     from contracts.schemas import TelemetryRecord, DriftEvent, CorrectionAction, AgentConfig
 """
 from __future__ import annotations
 
 from enum import Enum
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, ConfigDict, Field, AliasChoices, field_validator
 
 
 class Difficulty(str, Enum):
-    """Spider difficulty buckets. On every TelemetryRecord so accuracy can be
-    stratified by difficulty — the contamination-free improvement signal."""
+    """Difficulty buckets for stratified accuracy (contamination-free improvement signal)."""
+
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
@@ -22,81 +24,105 @@ class Difficulty(str, Enum):
 
 
 class FailureMode(str, Enum):
-    """How a failing run failed — set by the detector from the validity channel,
-    consumed by correction to decide WHAT to learn."""
-    VALID_BUT_WRONG = "valid_but_wrong"  # SQL runs, wrong result -> needs logic/join examples
-    INVALID_SQL = "invalid_sql"          # SQL won't parse/run -> needs structural examples
+    """How a failing run failed — set by the detector, consumed by correction."""
+
+    VALID_BUT_WRONG = "valid_but_wrong"  # ran/parsed, wrong answer
+    INVALID_OUTPUT = "invalid_output"  # did not parse / execute / validate
     NONE = "none"
+
+    @classmethod
+    def _missing_(cls, value: object):
+        # Historical events used invalid_sql
+        if value == "invalid_sql":
+            return cls.INVALID_OUTPUT
+        return None
 
 
 class FewShotExample(BaseModel):
-    """A (question, correct_sql) pair the agent learns from. Produced by the teacher
-    model in the correction stage, injected into AgentConfig.few_shot_examples."""
+    """A (question, correct_output) pair the agent learns from."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
     question: str
-    correct_sql: str
-    db_id: str = ""          # which Spider schema this targets
-    source: str = "teacher"  # provenance: "teacher" | "gold" | etc.
+    correct_output: str = Field(
+        validation_alias=AliasChoices("correct_output", "correct_sql"),
+    )
+    domain_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("domain_id", "db_id"),
+    )
+    source: str = "teacher"  # "teacher" | "gold" | "anchor" | ...
 
 
 class AgentConfig(BaseModel):
-    """The agent's current state. THE FEEDBACK SPINE: few_shot_examples starts empty
-    and grows as correction appends learned examples. That growth IS the learning."""
+    """Agent state. few_shot_examples starts empty and grows via correction."""
+
     config_id: str
-    model: str                                   # the model the agent runs (base = weaker tier)
+    model: str
     prompt_version: str = "v1"
     few_shot_examples: list[FewShotExample] = Field(default_factory=list)
 
 
 class TelemetryRecord(BaseModel):
-    """ONE agent run. Harness emits -> detector consumes.
-    Carries all channels plus question/SQL for the viewer's example panel."""
+    """One agent run. Harness emits → detector consumes."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
     run_id: str
     timestamp: float
     difficulty: Difficulty
 
-    # --- Tier 1: detection + improvement ---
-    execution_accuracy: float = Field(..., ge=0.0, le=1.0)  # 1.0 if result set matches gold
+    execution_accuracy: float = Field(..., ge=0.0, le=1.0)
 
-    # --- Tier 1: diagnostic ---
-    query_valid: bool                                        # did generated SQL parse + execute
+    # True if the output was well-formed enough to score (valid SQL / runnable code / …)
+    query_valid: bool
 
-    # --- Tier 2: diagnostic, label-free ---
-    generated_complexity: int = 0                            # joins+nesting in generated SQL
-    required_complexity: int = 0                             # joins+nesting in gold SQL
+    generated_complexity: int = 0
+    required_complexity: int = 0
 
-    # --- Tier 3: operational ---
     latency_ms: float = 0.0
     tokens: int = 0
 
-    # --- for the viewer's example panel ---
     question: str = ""
-    generated_sql: str = ""
-    db_id: str = ""
-    config_id: str = ""                                      # which AgentConfig produced this run
-    reasoning: str = ""                                      # raw <think> block (MiniMax M-series), empty for non-reasoning models
+    generated_output: str = Field(
+        default="",
+        validation_alias=AliasChoices("generated_output", "generated_sql"),
+    )
+    domain_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("domain_id", "db_id"),
+    )
+    config_id: str = ""
+    reasoning: str = ""
 
     @property
     def complexity_gap(self) -> int:
-        """Positive = agent under-reached (generated too-simple SQL for a hard question)."""
+        """Positive = agent under-reached required complexity."""
         return self.required_complexity - self.generated_complexity
 
 
 class DriftEvent(BaseModel):
-    """Detector emits -> correction consumes.
-    Fires when a WINDOWED channel aggregate crosses threshold (never on one query)."""
+    """Detector emits → correction consumes (windowed threshold breach)."""
+
     detected_at: float
-    channel: str                                  # e.g. "execution_accuracy"
-    severity: float                               # how far past threshold (>=0)
-    window_mean: float                            # the windowed aggregate that crossed
+    channel: str
+    severity: float
+    window_mean: float
     baseline_mean: float
-    failure_mode: FailureMode = FailureMode.NONE  # dominant failure kind in the window
-    # the specific runs to learn from (run_ids from the degraded window)
+    failure_mode: FailureMode = FailureMode.NONE
     failing_run_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("failure_mode", mode="before")
+    @classmethod
+    def _coerce_failure_mode(cls, v: object) -> object:
+        if v == "invalid_sql":
+            return FailureMode.INVALID_OUTPUT
+        return v
 
 
 class CorrectionAction(BaseModel):
-    """Correction emits -> harness consumes (appended to few_shot_examples).
-    The agent uses these on subsequent runs and recovers by LEARNING, not reverting."""
-    triggered_by: str                                          # DriftEvent channel/id
+    """Correction emits → harness consumes (appended to few_shot_examples)."""
+
+    triggered_by: str
     new_few_shot_examples: list[FewShotExample] = Field(default_factory=list)
     rationale: str = ""

@@ -301,9 +301,9 @@ function updateChannels(r) {
 
 function updateSqlPanel(r, k) {
   document.getElementById("ex-run").textContent = k;
-  document.getElementById("ex-db").textContent = r.db_id;
+  document.getElementById("ex-db").textContent = r.domain_id || r.db_id || "";
   document.getElementById("ex-question").textContent = r.question;
-  document.getElementById("ex-generated").textContent = r.generated_sql || "—";
+  document.getElementById("ex-generated").textContent = r.generated_output || r.generated_sql || "—";
 
   const badge = document.getElementById("ex-verdict");
   badge.textContent = VERDICT[r.verdict] || r.verdict;
@@ -326,7 +326,7 @@ function updateSqlPanel(r, k) {
     ? STATE.corrections[0].at
     : (STATE.correction ? STATE.correction.at : Infinity);
   if (injected && k >= corrAt) {
-    document.getElementById("ex-injected").textContent = injected.correct_sql || "—";
+    document.getElementById("ex-injected").textContent = injected.correct_output || "—";
     wc.hidden = false;
   } else {
     wc.hidden = true;

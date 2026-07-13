@@ -139,12 +139,12 @@ def _build_prompt(
         # Only show examples for the same database — cross-schema SQL is pure noise
         # because it references tables/columns that don't exist in the current schema.
         relevant = (
-            [e for e in examples if not e.db_id or e.db_id == db_id]
+            [e for e in examples if not e.domain_id or e.domain_id == db_id]
             if db_id else examples
         )
         if relevant:
             shots = "\n\n".join(
-                f"Q: {e.question}\nSQL: {e.correct_sql}" for e in relevant[:16]
+                f"Q: {e.question}\nSQL: {e.correct_output}" for e in relevant[:16]
             )
             parts.append(f"Few-shot examples:\n{shots}")
     if use_rules:

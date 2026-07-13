@@ -63,12 +63,12 @@ def verify_answer(output: str, gold: str) -> float | None:
 
 
 def _examples_block(examples: list[FewShotExample], topic: str) -> str:
-    same = [e for e in examples if not e.db_id or e.db_id == topic][:8]
+    same = [e for e in examples if not e.domain_id or e.domain_id == topic][:8]
     if not same:
         return ""
     lines = ["Similar solved problems:"]
     for ex in same:
-        lines.append(f"Q: {ex.question}\nA: #### {ex.correct_sql}")
+        lines.append(f"Q: {ex.question}\nA: #### {ex.correct_output}")
     return "\n".join(lines) + "\n\n"
 
 
@@ -133,9 +133,9 @@ class GSM8KMathAdapter:
     ) -> TelemetryRecord | None:
         del use_rules  # KG rules are SQL-specific
         text, tokens, latency_ms, reasoning = generate_math(
-            item.question, config, topic=item.db_id
+            item.question, config, topic=item.domain_id
         )
-        acc = verify_answer(text, item.gold_sql)
+        acc = verify_answer(text, item.gold_output)
         if acc is None:
             return None
         valid = extract_answer(text) is not None
@@ -150,8 +150,8 @@ class GSM8KMathAdapter:
             latency_ms=latency_ms,
             tokens=tokens,
             question=item.question,
-            generated_sql=text,
-            db_id=item.db_id,
+            generated_output=text,
+            db_id=item.domain_id,
             config_id=config.config_id,
             reasoning=reasoning,
         )
@@ -165,15 +165,15 @@ class GSM8KMathAdapter:
         for case in failing_cases:
             examples.append(FewShotExample(
                 question=case.question,
-                correct_sql=case.gold_sql,
-                db_id=case.db_id,
+                correct_output=case.gold_output,
+                domain_id=case.domain_id,
                 source="gold",
             ))
         for case in anchor_cases:
             examples.append(FewShotExample(
                 question=case.question,
-                correct_sql=case.gold_sql,
-                db_id=case.db_id,
+                correct_output=case.gold_output,
+                domain_id=case.domain_id,
                 source="anchor",
             ))
         return examples
