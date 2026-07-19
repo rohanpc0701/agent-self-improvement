@@ -47,3 +47,33 @@ def test_dump_uses_canonical_names():
     assert "generated_output" in data
     assert "domain_id" in data
     assert "generated_sql" not in data
+
+
+def test_injection_stats_roundtrip():
+    rec = TelemetryRecord(
+        run_id="r1",
+        timestamp=1.0,
+        difficulty="hard",
+        execution_accuracy=1.0,
+        query_valid=True,
+        injection_stats={
+            "examples_available": 3,
+            "examples_injected": 2,
+            "example_ids": ["a", "b"],
+            "rules_injected": 1,
+        },
+    )
+    assert TelemetryRecord.model_validate(rec.model_dump()).injection_stats[
+        "examples_injected"
+    ] == 2
+
+
+def test_legacy_record_without_injection_stats_parses():
+    rec = TelemetryRecord(
+        run_id="r2",
+        timestamp=1.0,
+        difficulty="easy",
+        execution_accuracy=0.0,
+        query_valid=False,
+    )
+    assert rec.injection_stats is None

@@ -144,6 +144,32 @@ def stream(items: list[FeedItem]) -> Iterator[FeedItem]:
     yield from items
 
 
+def build_hard_curriculum_stream(
+    questions: list[dict],
+    n_baseline: int = 40,
+    n_learn: int = 100,
+    n_heldout: int = 40,
+    seed: int = 42,
+    db_heldout_frac: float = 0.35,
+) -> list[FeedItem]:
+    """Eval feed: minimal easy warmup → long hard LEARN → held-out hard eval.
+
+    Easy baseline exists only so the detector can freeze a high baseline
+    (baseline_len≈40). Teaching signal and KG come from hard LEARN instances.
+    Held-out hard questions are disjoint from LEARN (same-domain split).
+    """
+    return build_stream(
+        questions,
+        n_baseline=n_baseline,
+        n_degraded=n_learn,
+        n_recovery=n_heldout,
+        seed=seed,
+        same_db_split=True,
+        db_heldout_frac=db_heldout_frac,
+        baseline_easy_only=True,
+    )
+
+
 def build_continuous_stream(
     questions: list[dict],
     n_baseline: int = 40,

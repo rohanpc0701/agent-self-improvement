@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -17,7 +18,12 @@ from contracts.schemas import (
 )
 from correction.learner import FailingCase
 from harness import agent
-from harness.feed import FeedItem, build_continuous_stream, build_stream
+from harness.feed import (
+    FeedItem,
+    build_continuous_stream,
+    build_hard_curriculum_stream,
+    build_stream,
+)
 from harness.sandbox import extract_python_code, execution_accuracy
 
 _FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "coding_subset.json"
@@ -64,26 +70,65 @@ def _strip_think(text: str) -> str:
     return text
 
 
-def _examples_block(examples: list[FewShotExample], topic: str) -> str:
-    same = [e for e in examples if not e.domain_id or e.domain_id == topic][:3]
-    if not same:
-        return ""
-    lines = ["Similar solved problems:"]
-    for ex in same:
-        lines.append(f"Problem: {ex.question}\n```python\n{ex.correct_output}\n```")
-    return "\n\n".join(lines) + "\n\n"
+def _use_examples() -> bool:
+    return os.environ.get("AGENT_USE_EXAMPLES", "1") != "0"
 
 
-def _rules_block(topic: str, question: str) -> str:
-    """Runtime KG injection — same store as Spider, keyed by topic (db_id)."""
+def _rules_block(topic: str, question: str) -> tuple[str, int]:
+    """Runtime KG injection — same store as Spider, keyed by topic (db_id).
+
+    Returns (prompt_block, n_rules).
+    """
     if not topic:
-        return ""
+        return "", 0
     try:
         from correction.inject import build_context, format_prompt_block
 
-        return format_prompt_block(build_context(topic, question))
+        ctx = build_context(topic, question)
+        block = format_prompt_block(ctx)
+        return block, len(ctx.injected_rules)
     except Exception:
-        return ""
+        return "", 0
+
+
+def build_user_prompt(
+    question: str,
+    config: AgentConfig,
+    topic: str,
+    use_rules: bool,
+) -> tuple[str, dict]:
+    """Assemble the student prompt; report exactly what memory entered it."""
+    stats = {
+        "examples_available": len(config.few_shot_examples),
+        "examples_injected": 0,
+        "example_ids": [],
+        "rules_injected": 0,
+    }
+    parts: list[str] = []
+
+    if _use_examples():
+        same = [
+            e for e in config.few_shot_examples
+            if not e.domain_id or e.domain_id == topic
+        ][:3]
+        if same:
+            lines = ["Similar solved problems:"]
+            for ex in same:
+                lines.append(
+                    f"Problem: {ex.question}\n```python\n{ex.correct_output}\n```"
+                )
+            parts.append("\n\n".join(lines) + "\n\n")
+            stats["examples_injected"] = len(same)
+            stats["example_ids"] = [ex.question for ex in same]
+
+    if use_rules:
+        rules, n_rules = _rules_block(topic, question)
+        if rules:
+            parts.append(rules + "\n\n")
+            stats["rules_injected"] = n_rules
+
+    parts.append(f"Problem:\n{question}\n")
+    return "".join(parts), stats
 
 
 def generate_code(
@@ -91,15 +136,10 @@ def generate_code(
     config: AgentConfig,
     topic: str = "arrays",
     use_rules: bool = True,
-) -> tuple[str, int, float, str]:
+    temperature: float = 0.0,
+) -> tuple[str, int, float, str, dict]:
     client = agent._get_client()
-    parts = [_examples_block(config.few_shot_examples, topic)]
-    if use_rules:
-        rules = _rules_block(topic, question)
-        if rules:
-            parts.append(rules + "\n\n")
-    parts.append(f"Problem:\n{question}\n")
-    user = "".join(parts)
+    user, stats = build_user_prompt(question, config, topic, use_rules)
     t0 = time.perf_counter()
     resp = client.chat.completions.create(
         model=config.model,
@@ -107,13 +147,13 @@ def generate_code(
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": user},
         ],
-        temperature=0.0,
+        temperature=temperature,
         max_tokens=1024,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
     text = (resp.choices[0].message.content or "").strip()
     tokens = resp.usage.total_tokens if resp.usage else 0
-    return text, tokens, latency_ms, ""
+    return text, tokens, latency_ms, "", stats
 
 
 def verify_solution(output: str, problem: dict) -> tuple[float, bool, str]:
@@ -123,41 +163,53 @@ def verify_solution(output: str, problem: dict) -> tuple[float, bool, str]:
     return execution_accuracy(code, problem["function_name"], problem["tests"])
 
 
-def _teacher_repair(problem: dict, broken: str) -> str | None:
-    """Ask the teacher model for a repaired function; return code or None."""
+def _teacher_chat(system: str, user: str) -> str | None:
+    """Shared teacher call; returns extracted Python code or None."""
     try:
         from correction.provider import teacher_client_and_model
 
         client, model = teacher_client_and_model()
-        prompt = (
-            f"{problem['question']}\n\n"
-            f"Implement exactly: `def {problem['function_name']}(...):`\n"
-            "Broken attempt:\n"
-            f"```python\n{broken}\n```\n"
-            "Return a corrected ```python``` code block only."
-        )
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an expert Python programmer. Fix the broken function. "
-                        "Return ONLY a python markdown code block."
-                    ),
-                },
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
             ],
             temperature=0.0,
             max_tokens=2048,
         )
         raw = _strip_think(resp.choices[0].message.content or "")
-        code = extract_python_code(raw)
-        return code or None
+        return extract_python_code(raw) or None
     except Exception as exc:
-        _log.warning("coding teacher repair failed: %s", exc)
-        print(f"  [teacher] repair failed: {exc}", flush=True)
+        _log.warning("coding teacher call failed: %s", exc)
+        print(f"  [teacher] call failed: {exc}", flush=True)
         return None
+
+
+def _teacher_repair(problem: dict, broken: str) -> str | None:
+    """Ask the teacher model for a repaired function; return code or None."""
+    prompt = (
+        f"{problem['question']}\n\n"
+        f"Implement exactly: `def {problem['function_name']}(...):`\n"
+        "Broken attempt:\n"
+        f"```python\n{broken}\n```\n"
+        "Return a corrected ```python``` code block only."
+    )
+    return _teacher_chat(
+        "You are an expert Python programmer. Fix the broken function. "
+        "Return ONLY a python markdown code block.",
+        prompt,
+    )
+
+
+def teacher_solve(problem: dict) -> str | None:
+    """Teacher solves a problem from scratch (no student attempt, no few-shots)."""
+    prompt = (
+        f"{problem['question']}\n\n"
+        f"Implement exactly: `def {problem['function_name']}(...):`\n"
+        "Return a ```python``` code block containing only that function."
+    )
+    return _teacher_chat(_SYSTEM, prompt)
 
 
 def write_graph_rules(
@@ -236,6 +288,24 @@ class CodingAdapter:
             baseline_easy_only=True,
         )
 
+    def build_hard_curriculum_feed(
+        self,
+        seed: int,
+        n_baseline: int = 40,
+        n_learn: int = 100,
+        n_heldout: int = 40,
+        db_heldout_frac: float = 0.5,
+    ) -> list[FeedItem]:
+        """Easy warmup (detector only) → hard LEARN → held-out hard eval."""
+        return build_hard_curriculum_stream(
+            self.load_questions(),
+            n_baseline=n_baseline,
+            n_learn=n_learn,
+            n_heldout=n_heldout,
+            seed=seed,
+            db_heldout_frac=db_heldout_frac,
+        )
+
     def run_item(
         self, item: FeedItem, config: AgentConfig, use_rules: bool = True
     ) -> TelemetryRecord | None:
@@ -243,7 +313,7 @@ class CodingAdapter:
         if problem is None:
             return None
 
-        text, tokens, latency_ms, reasoning = generate_code(
+        text, tokens, latency_ms, reasoning, stats = generate_code(
             item.question, config, topic=item.domain_id, use_rules=use_rules
         )
         code = extract_python_code(text)
@@ -263,6 +333,7 @@ class CodingAdapter:
             db_id=item.domain_id,
             config_id=config.config_id,
             reasoning=reasoning,
+            injection_stats=stats,
         )
 
     def make_examples(
