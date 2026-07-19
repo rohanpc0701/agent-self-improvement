@@ -41,8 +41,15 @@ def probe(k: int = 2, temperature: float = 0.7, max_keep: int = 40) -> None:
     from orchestrator import _make_base_config
 
     candidates = json.loads(CANDIDATES_PATH.read_text())
+    # Probe scarce topics first so topic-balanced select_hard can early-stop.
+    topic_rank = {"dp": 0, "graphs": 1, "greedy": 2, "arithmetic": 3, "strings": 4, "arrays": 5}
+    candidates = sorted(
+        candidates, key=lambda p: (topic_rank.get(p["topic"], 9), p["id"])
+    )
     config = _make_base_config("difficulty-probe")  # empty few-shots
     results: list[tuple[dict, float]] = []
+    scarce = {"dp", "graphs", "greedy"}
+    scarce_ids = {p["id"] for p in candidates if p["topic"] in scarce}
 
     for i, p in enumerate(candidates, 1):
         passes = 0
@@ -59,6 +66,20 @@ def probe(k: int = 2, temperature: float = 0.7, max_keep: int = 40) -> None:
         rate = passes / k
         results.append((p, rate))
         print(f"  [{i}/{len(candidates)}] {p['id']} pass-rate={rate:.1f}", flush=True)
+
+        probed_ids = {c["id"] for c, _ in results}
+        hard_n = sum(1 for _, r in results if r <= 0.5)
+        if (
+            hard_n >= max_keep * 2
+            and scarce_ids.issubset(probed_ids)
+            and len(select_hard(results, max_keep=max_keep)) >= max_keep
+        ):
+            print(
+                f"  early-stop: {hard_n} hard after {i} probes "
+                f"(scarce topics done, max_keep={max_keep})",
+                flush=True,
+            )
+            break
 
     kept = select_hard(results, max_keep=max_keep)
 
