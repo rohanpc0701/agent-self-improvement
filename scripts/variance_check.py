@@ -29,7 +29,7 @@ from contracts.schemas import AgentConfig  # noqa: E402
 
 
 def _heldout_pool(seed: int, heldout_frac: float) -> list:
-    from adapters.registry import get_adapter
+    from adapters import get_adapter
 
     adapter = get_adapter("coding")
     items = adapter.build_hard_curriculum_feed(seed=seed, db_heldout_frac=heldout_frac)
