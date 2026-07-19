@@ -157,6 +157,150 @@ def _mcnemar_report(label: str, pairs: list[tuple[float, float]]) -> None:
     print("=" * 60, flush=True)
 
 
+def compare_teacher_run(items: list[FeedItem], adapter_name: str = "coding") -> None:
+    """After learning: student+memory vs unaided teacher on the same held-out questions.
+
+    Requires a prior --full run (CorrectionAction in events.jsonl). Measures whether
+    accumulated few-shots + KG close the gap to the teacher on completely new problems.
+    """
+    from contracts.eventlog import read_events
+    from contracts.schemas import CorrectionAction
+
+    corrections = read_events(only="correction")
+    if not corrections:
+        print(
+            "[compare-teacher] No correction in events.jsonl — run --full first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    latest: CorrectionAction = corrections[-1]
+    student_cfg = _make_base_config("compare-student").model_copy(
+        update={
+            "config_id": "compare-student",
+            "few_shot_examples": latest.new_few_shot_examples,
+        }
+    )
+
+    held_out = [it for it in items if it.phase == "recovery"]
+    seen_ids: set[str] = set()
+    unique: list[FeedItem] = []
+    for it in held_out:
+        if it.question_id not in seen_ids:
+            unique.append(it)
+            seen_ids.add(it.question_id)
+
+    # Headline = hard bucket; still score extra for overall.
+    hard_items = [it for it in unique if it.difficulty == "hard"]
+    pool = hard_items or unique
+    total = len(pool)
+    print(
+        f"\n[compare-teacher] {total} unique held-out questions "
+        f"(adapter={adapter_name}, student+memory vs unaided teacher)",
+        flush=True,
+    )
+    print(
+        f"  student examples loaded: {len(latest.new_few_shot_examples)}",
+        flush=True,
+    )
+
+    student_scores: list[float] = []
+    teacher_scores: list[float] = []
+    # per-question: student win / teacher win / tie both right / tie both wrong
+    n_s_only = n_t_only = n_both = n_neither = 0
+
+    for i, item in enumerate(pool, 1):
+        rec_s = _run_item(item, student_cfg, adapter_name, use_rules=True)
+        if rec_s is None:
+            print(f"  [{i:>2}/{total}] SKIP student  {item.question[:45]}", flush=True)
+            continue
+        s_acc = rec_s.execution_accuracy
+
+        t_acc = _teacher_score_item(item, adapter_name)
+        if t_acc is None:
+            print(
+                f"  [{i:>2}/{total}] [{item.difficulty:<6}] "
+                f"S={'✓' if s_acc == 1.0 else '✗'} T=ERR  {item.question[:40]}",
+                flush=True,
+            )
+            continue
+
+        student_scores.append(s_acc)
+        teacher_scores.append(t_acc)
+        if s_acc == 1.0 and t_acc == 1.0:
+            n_both += 1
+            tag = "both✓"
+        elif s_acc == 1.0 and t_acc == 0.0:
+            n_s_only += 1
+            tag = "S>T"
+        elif s_acc == 0.0 and t_acc == 1.0:
+            n_t_only += 1
+            tag = "T>S"
+        else:
+            n_neither += 1
+            tag = "both✗"
+
+        print(
+            f"  [{i:>2}/{total}] [{item.difficulty:<6}] "
+            f"S={'✓' if s_acc == 1.0 else '✗'} T={'✓' if t_acc == 1.0 else '✗'} "
+            f"{tag:<6}  {item.question[:40]}",
+            flush=True,
+        )
+
+    if not student_scores:
+        print("[compare-teacher] No scorable questions.", file=sys.stderr)
+        return
+
+    n = len(student_scores)
+    s_mean = sum(student_scores) / n
+    t_mean = sum(teacher_scores) / n
+    gap = s_mean - t_mean
+    print(f"\n{'=' * 60}")
+    print(f"  Student+memory vs teacher (held-out, n={n} unique Qs)")
+    print(f"    Student + few-shots/KG : {s_mean:.3f}")
+    print(f"    Teacher (unaided)      : {t_mean:.3f}")
+    print(f"    Gap (student - teacher): {gap:+.3f}")
+    print(
+        f"    Per-Q: both✓={n_both}  S>T={n_s_only}  T>S={n_t_only}  both✗={n_neither}"
+    )
+    if gap >= 0:
+        print("  ✓ Learned student matched or beat unaided teacher on this slice.")
+    elif gap > -0.15:
+        print("  ~ Student close to teacher after learning — gap still open.")
+    else:
+        print("  ✗ Teacher still substantially ahead on held-out.")
+    print("=" * 60, flush=True)
+
+
+def _teacher_score_item(item: FeedItem, adapter_name: str) -> float | None:
+    """Unaided teacher accuracy on one feed item. None if unscorable."""
+    if adapter_name == "coding":
+        from adapters.coding import _index, teacher_solve, verify_solution
+
+        problem = _index().get(item.question_id)
+        if problem is None:
+            return None
+        code = teacher_solve(problem)
+        if not code:
+            return 0.0
+        acc, _, _ = verify_solution(f"```python\n{code}\n```", problem)
+        return acc
+
+    # Spider (and similar): teacher SQL vs gold execution
+    from correction.teacher import generate_sql as teacher_generate
+    from harness.evaluator import execution_accuracy as eval_acc
+    from harness.spider import get_db_path, schema_text
+
+    try:
+        db_path = get_db_path(item.domain_id)
+        schema = schema_text(db_path)
+        sql = teacher_generate(item.question, schema)
+        acc = eval_acc(sql, item.gold_output, db_path)
+        return acc
+    except Exception as exc:
+        print(f"  [teacher] spider score failed: {exc}", flush=True)
+        return None
+
+
 def significance_run(items: list[FeedItem], adapter_name: str = "spider") -> None:
     """McNemar paired significance test: same held-out questions WITHOUT vs WITH examples.
 
@@ -781,6 +925,233 @@ def probe_relevance(items: list[FeedItem], adapter_name: str = "spider") -> None
     print("=" * 60, flush=True)
 
 
+_ABLATION_ARMS = {
+    # arm: (AGENT_USE_EXAMPLES value, use_rules)
+    "none": ("0", False),
+    "examples": ("1", False),
+    "rules": ("0", True),
+    "both": ("1", True),
+}
+
+
+def _load_latest_examples():
+    from contracts.eventlog import read_events
+
+    corrections = read_events(only="correction")
+    if not corrections:
+        print(
+            "[ablation] No correction in events.jsonl — run a learn phase first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return corrections[-1].new_few_shot_examples
+
+
+def run_ablation_eval(
+    items: list, adapter_name: str, arms: list[str]
+) -> dict[str, dict]:
+    """Frozen-memory ablation: each arm replays the same unique held-out
+    hard questions with a different memory channel enabled."""
+    examples = _load_latest_examples()
+    config = _make_base_config("ablation").model_copy(
+        update={"few_shot_examples": examples}
+    )
+
+    held = [it for it in items if it.phase == "recovery"]
+    seen: set[str] = set()
+    pool = []
+    for it in held:
+        if it.difficulty == "hard" and it.question_id not in seen:
+            pool.append(it)
+            seen.add(it.question_id)
+
+    print(
+        f"\n[ablation] arms={arms} on {len(pool)} unique held-out hard Qs "
+        f"({len(examples)} examples in frozen memory)",
+        flush=True,
+    )
+
+    results: dict[str, dict] = {}
+    prev_flag = os.environ.get("AGENT_USE_EXAMPLES")
+    try:
+        for arm in arms:
+            flag, use_rules = _ABLATION_ARMS[arm]
+            os.environ["AGENT_USE_EXAMPLES"] = flag
+            per_q: dict[str, float] = {}
+            zero_inj = 0
+            inj_counts: list[int] = []
+            for i, item in enumerate(pool, 1):
+                rec = _run_item(item, config, adapter_name, use_rules=use_rules)
+                if rec is None:
+                    continue
+                append_event(rec)
+                per_q[item.question_id] = rec.execution_accuracy
+                stats = rec.injection_stats or {}
+                n_inj = stats.get("examples_injected", 0)
+                inj_counts.append(n_inj)
+                if flag == "1" and n_inj == 0:
+                    zero_inj += 1
+                print(
+                    f"  [{arm:<8}] [{i:>2}/{len(pool)}] "
+                    f"{'✓' if rec.execution_accuracy == 1.0 else '✗'} "
+                    f"inj={n_inj} {item.question[:40]}",
+                    flush=True,
+                )
+            n = len(per_q)
+            acc = sum(per_q.values()) / n if n else 0.0
+            results[arm] = {
+                "acc": acc,
+                "n": n,
+                "per_q": per_q,
+                "mean_examples": sum(inj_counts) / n if n else 0.0,
+                "zero_injection_pct": 100.0
+                * (
+                    (zero_inj / n)
+                    if flag == "1" and n
+                    else (1.0 if n else 0.0)
+                ),
+            }
+    finally:
+        if prev_flag is None:
+            os.environ.pop("AGENT_USE_EXAMPLES", None)
+        else:
+            os.environ["AGENT_USE_EXAMPLES"] = prev_flag
+
+    print(f"\n{'=' * 60}")
+    print("  ABLATION (frozen memory, same held-out hard Qs)")
+    for arm, r in results.items():
+        print(
+            f"    {arm:<9}: acc={r['acc']:.3f}  n={r['n']}  "
+            f"mean_inj={r['mean_examples']:.2f}  "
+            f"zero_inj={r['zero_injection_pct']:.0f}%"
+        )
+    print("=" * 60, flush=True)
+
+    if "none" in results:
+        base = results["none"]["per_q"]
+        for arm in ("examples", "rules", "both"):
+            if arm in results:
+                pairs = [
+                    (base[q], results[arm]["per_q"][q])
+                    for q in base
+                    if q in results[arm]["per_q"]
+                ]
+                _mcnemar_report(f"{arm} vs none", pairs)
+    return results
+
+
+def run_hard_curriculum_eval(
+    log_path: Path,
+    adapter_name: str = "coding",
+    n_baseline: int = 40,
+    n_learn: int = 100,
+    n_heldout: int = 40,
+    db_heldout_frac: float = 0.5,
+) -> None:
+    """Hard-curriculum eval pipeline.
+
+    1. Minimal easy baseline (detector warmup only — not the teaching diet)
+    2. Long hard LEARN phase (~n_learn instances) → drift → teacher few-shots + KG
+    3. Freeze memory
+    4. Compare student+memory vs unaided teacher on held-out hard (never in LEARN)
+
+    Designed as an evaluation story, not a balanced demo stream.
+    """
+    if adapter_name != "coding":
+        print(
+            "[hard-curriculum] Currently implemented for --adapter coding "
+            "(hard coding + unit-test teacher compare).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    adapter = _get_adapter(adapter_name)
+    items = adapter.build_hard_curriculum_feed(
+        seed=_SEED,
+        n_baseline=n_baseline,
+        n_learn=n_learn,
+        n_heldout=n_heldout,
+        db_heldout_frac=db_heldout_frac,
+    )
+    n_base = sum(1 for it in items if it.phase == "baseline")
+    n_deg = sum(1 for it in items if it.phase == "degraded")
+    n_rec = sum(1 for it in items if it.phase == "recovery")
+    n_held_unique = len({it.question_id for it in items if it.phase == "recovery"})
+
+    print(f"\n{'=' * 60}", flush=True)
+    print("  HARD-CURRICULUM EVAL PIPELINE", flush=True)
+    print(f"  adapter={adapter_name}", flush=True)
+    print(f"  easy warmup (detector) : {n_base}", flush=True)
+    print(f"  hard LEARN instances   : {n_deg}", flush=True)
+    print(f"  held-out samples       : {n_rec} ({n_held_unique} unique Qs)", flush=True)
+    print("  then: freeze memory → student+KG vs unaided teacher", flush=True)
+    print(f"{'=' * 60}\n", flush=True)
+
+    base_config = _make_base_config("hard-curriculum")
+    detector = Detector(DetectorConfig())
+    run_id_map: dict = {}
+    baseline_items: list = []
+    baseline_recs: list = []
+
+    drift_event = _pass1(
+        items, base_config, detector, run_id_map, baseline_items, baseline_recs, adapter_name
+    )
+
+    if drift_event is None:
+        print(
+            "\n[hard-curriculum] WARNING: no drift after hard LEARN. "
+            "KG/examples may be empty — compare will be weak.",
+            file=sys.stderr,
+        )
+    else:
+        print("[correction] Building few-shots + KG from hard LEARN failures ...", flush=True)
+        failing_cases = _harvest_failing_cases(run_id_map)
+        if not failing_cases:
+            failing_cases = _build_failing_cases(drift_event, run_id_map)
+        anchor_cases = _pick_anchors(baseline_items, baseline_recs)
+        n_domains = len({c.domain_id for c in failing_cases})
+        print(
+            f"  {len(failing_cases)} failing cases across {n_domains} domains, "
+            f"{len(anchor_cases)} anchors",
+            flush=True,
+        )
+        action = _apply_correction(adapter_name, drift_event, failing_cases, anchor_cases)
+        append_event(action)
+        print(
+            f"  CorrectionAction: {len(action.new_few_shot_examples)} examples — "
+            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'teacher')} teacher, "
+            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'gold')} gold, "
+            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'anchor')} anchor",
+            flush=True,
+        )
+        from adapters.coding import write_graph_rules
+
+        print("[graph] Writing KG rules from hard failures ...", flush=True)
+        n_rules = write_graph_rules(drift_event, failing_cases)
+        print(f"  {n_rules} rule(s) in correction/graph_store.json", flush=True)
+
+    # Contaminaton-free: student WITHOUT on held-out (optional baseline for the claim)
+    print(
+        "\n[hard-curriculum] Held-out WITHOUT (student, no memory) ...",
+        flush=True,
+    )
+    base_accs = dry_run_heldout(items, adapter_name=adapter_name)
+
+    # Student WITH memory on held-out stream (writes recovery telemetry)
+    recovery_records = _pass2(items, base_config, adapter_name=adapter_name)
+    _print_comparison(recovery_records, base_accs=base_accs, diff="hard")
+
+    # Headline eval: student+memory vs unaided teacher on new hard problems
+    print(
+        "\n[hard-curriculum] Freeze memory — compare student+KG vs teacher "
+        "on held-out hard ...",
+        flush=True,
+    )
+    compare_teacher_run(items, adapter_name=adapter_name)
+
+    print(f"\n[hard-curriculum] events.jsonl written to {log_path}", flush=True)
+
+
 def run_full_loop(
     items: list[FeedItem],
     log_path: Path,
@@ -869,6 +1240,10 @@ def run_full_loop(
     # Print the improvement claim (hard bucket is the benchmark — see plan 006)
     # -------------------------------------------------------------------------
     _print_comparison(recovery_records, base_accs=base_accs, diff="hard")
+
+    # Optional: student+memory vs unaided teacher on the same held-out slice
+    if os.environ.get("COMPARE_TEACHER", "").strip() in ("1", "true", "yes"):
+        compare_teacher_run(items, adapter_name=adapter_name)
 
     print(f"\n[orchestrator] events.jsonl written to {log_path}", flush=True)
 
@@ -1014,6 +1389,47 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--compare-teacher", action="store_true",
+        help=(
+            "After learning: score student+memory vs unaided teacher on the same held-out "
+            "hard questions. Requires --full first (reads CorrectionAction from events.jsonl). "
+            "Coding uses unit-test verify; spider uses SQL EX."
+        ),
+    )
+    p.add_argument(
+        "--hard-curriculum", action="store_true",
+        help=(
+            "Eval pipeline (coding): easy warmup → ~100 hard LEARN → teacher/KG → "
+            "student+memory vs unaided teacher on held-out hard. Implies --fresh."
+        ),
+    )
+    p.add_argument(
+        "--n-learn", type=int, default=100,
+        help="Hard LEARN instances for --hard-curriculum (default 100).",
+    )
+    p.add_argument(
+        "--n-heldout", type=int, default=40,
+        help="Held-out samples for --hard-curriculum (default 40; unique Qs fewer).",
+    )
+    p.add_argument(
+        "--heldout-frac",
+        type=float,
+        default=0.5,
+        help=(
+            "Fraction of hard questions held out per topic for curriculum/ablation "
+            "(default 0.5 → ~30/30 split once hard pool ≥ 60)."
+        ),
+    )
+    p.add_argument(
+        "--ablation",
+        type=str,
+        default=None,
+        help=(
+            "Comma list of arms (none,examples,rules,both) or 'all'. "
+            "Requires a prior learn phase in events.jsonl."
+        ),
+    )
+    p.add_argument(
         "--ceiling", action="store_true",
         help=(
             "Run the teacher model on the unique held-out pool. "
@@ -1066,13 +1482,35 @@ if __name__ == "__main__":
     # The validation modes exist to test the --full headline, and the correction
     # examples in events.jsonl were generated under --full. Force the 80/phase feed
     # so the held-out sample (and RNG trajectory) matches, regardless of --n.
-    if (args.significance or args.ceiling) and not args.full:
+    if (args.significance or args.ceiling or args.compare_teacher) and not args.full:
         print("[orchestrator] forcing --full feed for validation mode "
               "(matches the headline's held-out sample).", flush=True)
         items = _build_feed(args.n, full=True, adapter_name=args.adapter)
 
     if args.significance:
         significance_run(items, adapter_name=args.adapter)
+        sys.exit(0)
+
+    if args.compare_teacher:
+        compare_teacher_run(items, adapter_name=args.adapter)
+        sys.exit(0)
+
+    if args.ablation:
+        arms = (
+            ["none", "examples", "rules", "both"]
+            if args.ablation == "all"
+            else [a.strip() for a in args.ablation.split(",")]
+        )
+        unknown = set(arms) - set(_ABLATION_ARMS)
+        if unknown:
+            sys.exit(f"unknown ablation arms: {sorted(unknown)}")
+        adapter = _get_adapter(args.adapter)
+        ablate_items = adapter.build_hard_curriculum_feed(
+            seed=_SEED,
+            n_heldout=args.n_heldout,
+            db_heldout_frac=args.heldout_frac,
+        )
+        run_ablation_eval(ablate_items, args.adapter, arms)
         sys.exit(0)
 
     if args.ceiling:
@@ -1112,7 +1550,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     log_path = Path(DEFAULT_LOG)
-    if args.fresh:
+    if args.fresh or args.hard_curriculum:
         if log_path.exists():
             log_path.unlink()
             print(f"[orchestrator] {DEFAULT_LOG} cleared (--fresh).")
@@ -1120,6 +1558,16 @@ if __name__ == "__main__":
         if graph_store.exists():
             graph_store.unlink()
             print("[orchestrator] correction/graph_store.json cleared (--fresh).")
+
+    if args.hard_curriculum:
+        run_hard_curriculum_eval(
+            log_path,
+            adapter_name=args.adapter,
+            n_learn=args.n_learn,
+            n_heldout=args.n_heldout,
+            db_heldout_frac=args.heldout_frac,
+        )
+        sys.exit(0)
 
     if args.continuous:
         cont_items = _build_continuous_feed(

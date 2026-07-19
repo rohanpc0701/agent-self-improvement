@@ -83,9 +83,25 @@ python fixtures/generate_mocks.py
 
 bash scripts/use_prime_student.sh list
 bash scripts/use_prime_student.sh smoke
-bash scripts/use_prime_student.sh probe   # cheap WITH/WITHOUT (~22 calls)
-bash scripts/use_prime_student.sh full    # full loop + KG on recovery
+bash scripts/use_prime_student.sh probe          # cheap WITH/WITHOUT (~22 calls)
+bash scripts/use_prime_student.sh full           # full loop + KG on recovery
+bash scripts/use_prime_student.sh compare        # after full: student+memory vs teacher
+bash scripts/use_prime_student.sh curriculum     # hard-curriculum eval (see below)
+# or one shot: bash scripts/use_prime_student.sh full-compare
 ```
+
+**Hard-curriculum eval** (the intended product measurement):
+
+1. Easy warmup only for the detector (~40) — not the teaching diet  
+2. ~100 hard LEARN instances → drift → teacher few-shots + KG  
+3. Freeze memory  
+4. Score **student+memory vs unaided teacher** on held-out hard (never in LEARN)
+
+```bash
+bash scripts/use_prime_student.sh curriculum
+# N_LEARN=120 N_HELDOUT=40 bash scripts/use_prime_student.sh curriculum
+```
+
 
 Overrides: `PRIME_AGENT_MODEL=...` (student), `PRIME_TEACHER_MODEL=...` (teacher).
 
