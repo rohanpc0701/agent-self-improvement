@@ -559,9 +559,11 @@ def _apply_correction(
 
 
 def _make_base_config(run_suffix: str = "v0") -> AgentConfig:
+    # Re-read env so capacity-probe overrides (AGENT_MODEL=...) take effect per process.
+    model = os.environ.get("AGENT_MODEL", _BASE_MODEL)
     return AgentConfig(
         config_id=f"v0-base-{run_suffix}",
-        model=_BASE_MODEL,
+        model=model,
         few_shot_examples=[],
     )
 

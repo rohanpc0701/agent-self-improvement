@@ -157,3 +157,63 @@ One learn phase on the new 30-problem LEARN pool → freeze memory
   `events.jsonl` (same guard as `--compare-teacher`).
 - Known pitfalls from handoff §10 still apply (`.env` Ollama override, proxy
   403s on Prime, detector's ~40 easy-warmup requirement).
+
+## Results — 2026-07-19
+
+**Setup:** hard pool 75 (35 original + 40 `h2_*` from EvalPlus probe). Learn:
+`--hard-curriculum --fresh --n-learn 100 --n-heldout 30 --heldout-frac 0.5`.
+Frozen memory: 26 examples (19 teacher / 5 gold / 2 anchor), 3 KG rules.
+Student 3B = `meta-llama/Llama-3.2-3B-Instruct`. Capacity student =
+`qwen/qwen3-coder` (Prime; `Qwen/Qwen2.5-Coder-7B-Instruct` 404'd).
+Logs: `runs/ablate_20260719_0903.log`, `runs/ablate_capacity_coder_20260719_1019.log`.
+
+### 3B frozen-memory ablation (n=29 unique held-out hard)
+
+| arm | acc | n | mean_inj | zero_inj% |
+|---|---:|---:|---:|---:|
+| none | 0.103 | 29 | 0.00 | 100 |
+| examples | 0.034 | 29 | 2.93 | 0 |
+| rules | 0.103 | 29 | 0.00 | 100 |
+| both | 0.034 | 29 | 2.93 | 0 |
+
+**Injection audit:** examples reach prompts (mean_inj≈2.93, zero_inj=0% on
+examples/both arms). Not a retrieval plumbing failure.
+
+**McNemar vs none (n=29):**
+
+| pair | Δ | discordant b+c | exact p |
+|---|---:|---:|---:|
+| examples vs none | −0.069 | 2 | 0.5000 |
+| rules vs none | +0.000 | 0 | 1.0000 |
+| both vs none | −0.069 | 2 | 0.5000 |
+
+### Capacity probe (`qwen/qwen3-coder`, same frozen memory, n=29)
+
+| arm | acc | n | mean_inj | zero_inj% |
+|---|---:|---:|---:|---:|
+| none | 0.931 | 29 | 0.00 | 100 |
+| both | 0.897 | 29 | 2.93 | 0 |
+
+both vs none: Δ = −0.034, b+c=1, p=1.0000.
+
+### Pre-registered pair: cap-none vs 3B-both (hand-paired by question index)
+
+| | |
+|---|---|
+| cap-none | 0.931 |
+| 3B-both | 0.034 |
+| cap>3B / 3B>cap / both✓ / both✗ | 26 / 0 / 1 / 2 |
+| McNemar exact p | 0.0000 |
+
+### Decision-tree row that fired (§7)
+
+**Primary:** `cap-none ≫ 3B-both` → capacity floor dominant. Next milestone:
+promote a mid-size student (or LoRA-on-verified-repairs), not more ICL plumbing
+on 3B alone.
+
+**Secondary:** examples reach prompts but no lift (and slight harm). On a
+capacity-adequate student, failure-conditioned unit-test-gated ICL remains the
+next memory-quality experiment — but only after the student can solve ~hard
+problems unaided.
+
+**Not fired:** high zero-injection % (retrieval rewrite deferred).

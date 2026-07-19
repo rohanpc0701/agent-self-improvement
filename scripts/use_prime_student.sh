@@ -123,7 +123,9 @@ PY
     #   Capacity (7B): none / both
     # Override: PRIME_CAPACITY_MODEL=meta-llama/Llama-3.1-8B-Instruct \
     #   N_LEARN=100 N_HELDOUT=30 bash scripts/use_prime_student.sh ablate
-    capacity_model="${PRIME_CAPACITY_MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}"
+    # Prime catalog drifts; default to a known mid-size coder. Override via PRIME_CAPACITY_MODEL.
+    # Prefer coder over qwen3-8b (that SKU can be slow / thinking-heavy on Prime).
+    capacity_model="${PRIME_CAPACITY_MODEL:-qwen/qwen3-coder}"
 
     echo "== 1/3 learn phase (fresh) =="
     python3 orchestrator.py --adapter coding --hard-curriculum --fresh \
