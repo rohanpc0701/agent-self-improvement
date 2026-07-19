@@ -228,3 +228,58 @@ class TestHardCurriculumFeed:
         assert len(held_ids) >= 20  # ~half of ≥60 hard pool at frac=0.5
         items2 = a.build_hard_curriculum_feed(seed=42, db_heldout_frac=0.5)
         assert {i.question_id for i in items2 if i.phase == "recovery"} == held_ids
+
+
+class TestChatRetry:
+    class _Err429(Exception):
+        status_code = 429
+
+    class _Err404(Exception):
+        status_code = 404
+
+    def _client(self, fail_times, err):
+        calls = {"n": 0}
+
+        class FakeCompletions:
+            def create(self, **kw):
+                calls["n"] += 1
+                if calls["n"] <= fail_times:
+                    raise err("boom")
+                return "resp"
+
+        class FakeChat:
+            completions = FakeCompletions()
+
+        class FakeClient:
+            chat = FakeChat()
+
+        return FakeClient(), calls
+
+    def test_retries_429_then_succeeds(self, monkeypatch):
+        from adapters import coding
+
+        monkeypatch.setattr(coding.time, "sleep", lambda s: None)
+        client, calls = self._client(2, self._Err429)
+        assert coding._chat_with_retry(client, model="m", messages=[]) == "resp"
+        assert calls["n"] == 3
+
+    def test_non_retryable_raises_immediately(self):
+        from adapters import coding
+
+        client, calls = self._client(99, self._Err404)
+        import pytest
+
+        with pytest.raises(self._Err404):
+            coding._chat_with_retry(client, model="m", messages=[])
+        assert calls["n"] == 1
+
+    def test_gives_up_after_max_retries(self, monkeypatch):
+        from adapters import coding
+
+        monkeypatch.setattr(coding.time, "sleep", lambda s: None)
+        client, calls = self._client(99, self._Err429)
+        import pytest
+
+        with pytest.raises(self._Err429):
+            coding._chat_with_retry(client, model="m", messages=[], max_retries=3)
+        assert calls["n"] == 4

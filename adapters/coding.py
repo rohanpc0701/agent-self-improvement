@@ -131,6 +131,36 @@ def build_user_prompt(
     return "".join(parts), stats
 
 
+_RETRYABLE_STATUS = (408, 429, 500, 502, 503, 504)
+
+
+def _chat_with_retry(client, *, max_retries: int = 5, **kwargs):
+    """Retry transient API failures (429/5xx/connection) with exponential backoff.
+
+    A single throttled call must not kill a multi-hundred-call pipeline run.
+    """
+    import random as _random
+
+    for attempt in range(max_retries + 1):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            retryable = status in _RETRYABLE_STATUS or exc.__class__.__name__ in (
+                "APIConnectionError",
+                "APITimeoutError",
+            )
+            if not retryable or attempt == max_retries:
+                raise
+            delay = min(2.0 * 2**attempt, 60.0) + _random.uniform(0, 1)
+            print(
+                f"  [retry] {status or exc.__class__.__name__} — attempt "
+                f"{attempt + 1}/{max_retries}, sleeping {delay:.1f}s",
+                flush=True,
+            )
+            time.sleep(delay)
+
+
 def generate_code(
     question: str,
     config: AgentConfig,
@@ -141,7 +171,8 @@ def generate_code(
     client = agent._get_client()
     user, stats = build_user_prompt(question, config, topic, use_rules)
     t0 = time.perf_counter()
-    resp = client.chat.completions.create(
+    resp = _chat_with_retry(
+        client,
         model=config.model,
         messages=[
             {"role": "system", "content": _SYSTEM},
@@ -169,7 +200,8 @@ def _teacher_chat(system: str, user: str) -> str | None:
         from correction.provider import teacher_client_and_model
 
         client, model = teacher_client_and_model()
-        resp = client.chat.completions.create(
+        resp = _chat_with_retry(
+            client,
             model=model,
             messages=[
                 {"role": "system", "content": system},
