@@ -80,7 +80,33 @@ Full ablate pipeline (own learn phase per student, frozen memory, 4 arms +
 capacity leg) launched 2026-07-19; artifacts under `runs/nemo_artifacts/` and
 `runs/qwen35-4b_artifacts/`.
 
-**Results: PENDING — append tables here when the chain completes.**
+**Nemo (2026-07-19):** learn phase built 17 examples + 3 KG rules (drift fired
+62/140). Curriculum pass showed WITHOUT 0.414 → WITH 0.586 (+0.172), but the
+frozen-memory ablation arms on the same memory did not reproduce it:
+none 0.517 / examples 0.414 / rules 0.414 / both 0.414 (McNemar p=0.375 —
+non-significant). Resolved by the variance protocol below: the true nemo
+memory effect is ≈ 0.
+
+**Qwen3.5-4B: PENDING — append when the chain completes.**
+
+### F. Temp-0 run-to-run variance (nemo, 4 repeats × 34 held-out Qs)
+
+| arm | mean | sd | range | unstable Qs |
+|---|---:|---:|---|---:|
+| none | 0.529 | 0.000 | [0.529, 0.529] | 5 / 34 |
+| examples | 0.529 | 0.047 | [0.471, 0.588] | 11 / 34 |
+
+Per-repeat Δ(examples−none): +0.059, +0.029, −0.029, −0.059 → mean **0.000**.
+
+- **Nemo null confirmed by repetition** — memory oscillates symmetrically
+  around zero effect. Stronger evidence than any single-run p-value.
+- **Provider nondeterminism is per-question, not aggregate**: identical bare
+  accuracy every repeat while 2–4 questions flip per run and cancel.
+- **Memory injection doubles instability** (11 vs 5 unstable questions) —
+  longer prompts put more items on decision boundaries.
+- **Protocol from here:** deltas < ~0.06 are noise on this stack; paired tests
+  need ≥3 repeats with per-question majority vote before McNemar.
+  (`scripts/variance_check.py`, `runs/variance_nemo.log`.)
 
 ## Operational lessons (cost us real runs)
 
