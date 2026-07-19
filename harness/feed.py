@@ -121,6 +121,13 @@ def build_stream(
         )
 
     def _pick(pool: list[dict], n: int, phase: str) -> list[FeedItem]:
+        # Prefer without-replacement so n_heldout≈unique held-out Qs for honest eval.
+        if n <= len(pool):
+            chosen = rng.sample(pool, n)
+        else:
+            chosen = pool.copy()
+            rng.shuffle(chosen)
+            chosen.extend(rng.choices(pool, k=n - len(pool)))
         return [
             FeedItem(
                 question_id=q["id"],
@@ -130,7 +137,7 @@ def build_stream(
                 difficulty=q["difficulty"],
                 phase=phase,
             )
-            for q in rng.choices(pool, k=n)
+            for q in chosen
         ]
 
     return (

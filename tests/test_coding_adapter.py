@@ -225,6 +225,6 @@ class TestHardCurriculumFeed:
         learn_ids = {i.question_id for i in items if i.phase == "degraded"}
         held_ids = {i.question_id for i in items if i.phase == "recovery"}
         assert learn_ids.isdisjoint(held_ids)
-        assert len(held_ids) >= 10  # current hard pool; grows after import probe
+        assert len(held_ids) >= 20  # ~half of ≥60 hard pool at frac=0.5
         items2 = a.build_hard_curriculum_feed(seed=42, db_heldout_frac=0.5)
         assert {i.question_id for i in items2 if i.phase == "recovery"} == held_ids
