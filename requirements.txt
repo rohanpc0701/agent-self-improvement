@@ -4,4 +4,5 @@ uvicorn>=0.29
 openai>=1.0         # OpenAI-compatible client: MiniMax cloud or local Ollama
 networkx>=3.0       # correction knowledge graph
 pytest>=8.0
+evalplus>=0.2.0     # MBPP+/HumanEval+ import (scripts/import_problems.py)
 # Spider eval / SQL execution uses Python stdlib sqlite3 (no dep)

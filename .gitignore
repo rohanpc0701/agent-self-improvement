@@ -15,3 +15,7 @@ correction/graph_store.json
 # exact numbers to this data, and generate_mocks.py is not bit-reproducible.
 *.sqlite
 *.db
+# Import / ablation intermediates (do not commit)
+fixtures/imported_candidates.json
+fixtures/coding_subset.backup.json
+runs/
