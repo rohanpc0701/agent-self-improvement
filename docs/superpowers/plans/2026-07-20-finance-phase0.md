@@ -33,27 +33,27 @@
 `fixtures/finance_manifest.json`; tests `tests/test_finance_adapter.py`,
 `tests/test_finance_splits.py`. Modify `adapters/__init__.py` (register).
 
-1. [ ] Loader: pull `Sanscritic/finance-pro-bench` via HF `datasets` once,
+1. [x] Loader: pull `Sanscritic/finance-pro-bench` via HF `datasets` once,
    cache to `fixtures/finance_pro_bench.json` (id, category, question, rubric).
    Commit the cached file (CC-BY-4.0 — include attribution line in the file
    header or a `fixtures/FINANCE_LICENSE` note).
-2. [ ] `scripts/finance_freeze_splits.py`: category-stratified 200/80/120
+2. [x] `scripts/finance_freeze_splits.py`: category-stratified 200/80/120
    (train-stream/validation/held-out), seed 42, writes
    `fixtures/finance_manifest.json` `{frozen_at, seed, dataset_sha256,
    train_ids, validation_ids, heldout_ids}`; `--check` verifies disjointness +
    sha. Every category must appear in train AND held-out where size permits
    (categories with <3 questions: train only — log them).
-3. [ ] `adapters/finance.py` (TaskAdapter protocol, mirror `adapters/coding.py`
+3. [x] `adapters/finance.py` (TaskAdapter protocol, mirror `adapters/coding.py`
    structure): `load_questions`, `build_feed` (train-stream order, seeded),
    `run_item` (student answer → judged score → `TelemetryRecord` with
    `execution_accuracy = normalized_score/100`, `domain_id = category`,
    `injection_stats` populated). Judge call lives in Task 2's module — adapter
    imports it.
-4. [ ] **Rubric firewall in code, not convention:** the student prompt builder
+4. [x] **Rubric firewall in code, not convention:** the student prompt builder
    takes only `question`; a test asserts the rubric string can never reach a
    student or teacher prompt for ids in `heldout_ids`/`validation_ids`
    (teacher + train-stream rubric is allowed).
-5. [ ] Commit: `feat: finance adapter, dataset cache, frozen 200/80/120 splits`
+5. [x] Commit: `feat: finance adapter, dataset cache, frozen 200/80/120 splits`
 
 **Acceptance:** `--check` exits 0; pytest green; manifest + dataset cache
 committed at matching sha.
@@ -121,7 +121,7 @@ ambiguities → Questions section, do NOT improvise around plan §1–§2 rules.
 ## Execution log (Cursor fills in)
 
 - v1 closeout: DONE 2026-07-20 — probe 228/448 (~183 hard), no merge/manifest; hermetic G0.1–G0.2 tooling in `71ae446` + this closeout commit.
-- Task 1:
+- Task 1: DONE 2026-07-20 — HF test split cached (400); manifest 200/80/120 seed=42; rubric firewall tests; pytest 285 passed.
 - Task 2:
 - Task 3:
 
