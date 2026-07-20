@@ -17,7 +17,13 @@ def get_adapter(name: str) -> TaskAdapter:
         from adapters.coding import CodingAdapter
 
         return CodingAdapter()
-    raise ValueError(f"Unknown adapter {name!r} — choose spider, gsm8k, or coding")
+    if name == "finance":
+        from adapters.finance import FinanceAdapter
+
+        return FinanceAdapter()
+    raise ValueError(
+        f"Unknown adapter {name!r} — choose spider, gsm8k, coding, or finance"
+    )
 
 
 __all__ = ["get_adapter", "TaskAdapter"]

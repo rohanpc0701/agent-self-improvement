@@ -101,8 +101,48 @@ PY
   full)
     bash scripts/run_coding_eval.sh full
     ;;
+  compare)
+    # Requires a prior full/curriculum run (CorrectionAction in events.jsonl)
+    python3 orchestrator.py --adapter coding --compare-teacher --full
+    ;;
+  full-compare)
+    # Full loop then student+memory vs unaided teacher on held-out
+    COMPARE_TEACHER=1 bash scripts/run_coding_eval.sh full
+    ;;
+  curriculum)
+    # Eval pipeline: easy warmup → 100 hard LEARN → KG → vs teacher on new hard
+    # Override: N_LEARN=120 N_HELDOUT=40 bash scripts/use_prime_student.sh curriculum
+    python3 orchestrator.py --adapter coding --hard-curriculum \
+      --n-learn "${N_LEARN:-100}" \
+      --n-heldout "${N_HELDOUT:-40}" \
+      --heldout-frac "${HELDOUT_FRAC:-0.5}"
+    ;;
+  ablate)
+    # Diagnostics: learn once, then frozen-memory ablation + capacity probe.
+    #   Arms (3B): none / examples / rules / both  — same held-out Qs
+    #   Capacity (7B): none / both
+    # Override: PRIME_CAPACITY_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+    #   N_LEARN=100 N_HELDOUT=30 bash scripts/use_prime_student.sh ablate
+    # Prime catalog drifts; default to a known mid-size coder. Override via PRIME_CAPACITY_MODEL.
+    # Prefer coder over qwen3-8b (that SKU can be slow / thinking-heavy on Prime).
+    capacity_model="${PRIME_CAPACITY_MODEL:-qwen/qwen3-coder}"
+
+    echo "== 1/3 learn phase (fresh) =="
+    python3 orchestrator.py --adapter coding --hard-curriculum --fresh \
+      --n-learn "${N_LEARN:-100}" --n-heldout "${N_HELDOUT:-30}" \
+      --heldout-frac "${HELDOUT_FRAC:-0.5}"
+
+    echo "== 2/3 ablation arms (student: $AGENT_MODEL) =="
+    python3 orchestrator.py --adapter coding --ablation all \
+      --n-heldout "${N_HELDOUT:-30}" --heldout-frac "${HELDOUT_FRAC:-0.5}"
+
+    echo "== 3/3 capacity probe (student: $capacity_model) =="
+    AGENT_MODEL="$capacity_model" \
+      python3 orchestrator.py --adapter coding --ablation none,both \
+      --n-heldout "${N_HELDOUT:-30}" --heldout-frac "${HELDOUT_FRAC:-0.5}"
+    ;;
   *)
-    echo "Usage: $0 {list|smoke|probe|degraded|full}"
+    echo "Usage: $0 {list|smoke|probe|degraded|full|compare|full-compare|curriculum|ablate}"
     exit 1
     ;;
 esac

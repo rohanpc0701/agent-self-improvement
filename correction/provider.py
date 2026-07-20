@@ -12,8 +12,35 @@ from openai import OpenAI
 
 _MINIMAX_BASE = "https://api.minimax.io/v1"
 _PRIME_BASE = "https://api.pinference.ai/api/v1"
+_OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 _DEFAULT_MINIMAX_TEACHER = "MiniMax-M3"
 _DEFAULT_PRIME_TEACHER = "minimax/minimax-m2.5"
+_DEFAULT_OPENROUTER_TEACHER = "qwen/qwen3-coder"
+
+
+def _default_model_for_base(base: str, model: str) -> str:
+    if model:
+        return model
+    b = base.lower()
+    if "openrouter.ai" in b:
+        return _DEFAULT_OPENROUTER_TEACHER
+    if "pinference" in b or "primeintellect" in b:
+        return _DEFAULT_PRIME_TEACHER
+    return _DEFAULT_MINIMAX_TEACHER
+
+
+def _openrouter_client(api_key: str, base_url: str = _OPENROUTER_BASE) -> OpenAI:
+    headers = {}
+    referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+    title = os.environ.get("OPENROUTER_APP_TITLE", "agent-self-improvement").strip()
+    if referer:
+        headers["HTTP-Referer"] = referer
+    if title:
+        headers["X-Title"] = title
+    kwargs: dict = {"api_key": api_key, "base_url": base_url}
+    if headers:
+        kwargs["default_headers"] = headers
+    return OpenAI(**kwargs)
 
 
 def teacher_client_and_model() -> tuple[OpenAI, str]:
@@ -21,18 +48,31 @@ def teacher_client_and_model() -> tuple[OpenAI, str]:
 
     Resolution order:
       1. TEACHER_BASE_URL + TEACHER_API_KEY (explicit override)
-      2. Prime (PRIME_API_KEY) when TEACHER_USE_PRIME=1 or TEACHER_BASE_URL is Prime
-      3. MiniMax via MINIMAX_API_KEY
+      2. OpenRouter when TEACHER_USE_OPENROUTER=1 or TEACHER_BASE_URL is OpenRouter
+      3. Prime (PRIME_API_KEY) when TEACHER_USE_PRIME=1 or TEACHER_BASE_URL is Prime
+      4. MiniMax via MINIMAX_API_KEY
     """
     explicit_base = (os.environ.get("TEACHER_BASE_URL") or "").strip()
     explicit_key = (os.environ.get("TEACHER_API_KEY") or "").strip()
     model = (os.environ.get("TEACHER_MODEL") or "").strip()
 
     if explicit_base and explicit_key:
-        return OpenAI(api_key=explicit_key, base_url=explicit_base), (
-            model or _DEFAULT_PRIME_TEACHER
-            if "pinference" in explicit_base
-            else model or _DEFAULT_MINIMAX_TEACHER
+        if "openrouter.ai" in explicit_base.lower():
+            return _openrouter_client(explicit_key, explicit_base), _default_model_for_base(
+                explicit_base, model
+            )
+        return OpenAI(api_key=explicit_key, base_url=explicit_base), _default_model_for_base(
+            explicit_base, model
+        )
+
+    use_openrouter = (
+        os.environ.get("TEACHER_USE_OPENROUTER", "").strip() in ("1", "true", "yes")
+        or "openrouter.ai" in explicit_base.lower()
+    )
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if use_openrouter and openrouter_key:
+        return _openrouter_client(openrouter_key), (
+            model or _DEFAULT_OPENROUTER_TEACHER
         )
 
     use_prime = (
@@ -49,6 +89,7 @@ def teacher_client_and_model() -> tuple[OpenAI, str]:
     if not key:
         raise RuntimeError(
             "No teacher credentials. Set TEACHER_BASE_URL+TEACHER_API_KEY, "
+            "or TEACHER_USE_OPENROUTER=1 with OPENROUTER_API_KEY, "
             "or TEACHER_USE_PRIME=1 with PRIME_API_KEY, or MINIMAX_API_KEY."
         )
     return OpenAI(api_key=key, base_url=_MINIMAX_BASE), (

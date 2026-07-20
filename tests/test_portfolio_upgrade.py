@@ -83,6 +83,8 @@ class TestGSM8KAdapter:
         from adapters.gsm8k_math import load_gsm8k_questions
 
         qs = load_gsm8k_questions()
-        assert len(qs) >= 40
+        assert len(qs) >= 200
         assert all("expected_sql" in q for q in qs)
+        hard = [q for q in qs if q["difficulty"] in ("hard", "extra")]
+        assert len(hard) >= 100
 

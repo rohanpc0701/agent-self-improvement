@@ -95,6 +95,9 @@ class TelemetryRecord(BaseModel):
     config_id: str = ""
     reasoning: str = ""
 
+    # Diagnostics: what memory actually entered this run's prompt (None = not recorded)
+    injection_stats: dict | None = None
+
     @property
     def complexity_gap(self) -> int:
         """Positive = agent under-reached required complexity."""

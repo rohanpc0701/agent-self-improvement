@@ -10,9 +10,15 @@ from unittest.mock import patch
 
 import pytest
 
-from contracts.schemas import AgentConfig, Difficulty, TelemetryRecord
+from contracts.schemas import (
+    AgentConfig,
+    CorrectionAction,
+    Difficulty,
+    FewShotExample,
+    TelemetryRecord,
+)
 from harness.feed import FeedItem
-from orchestrator import _build_feed, dry_run_heldout
+from orchestrator import _build_feed, compare_teacher_run, dry_run_heldout, run_ablation_eval
 
 
 # ---------------------------------------------------------------------------
@@ -241,3 +247,87 @@ class TestDryRunHeldout:
             result = dry_run_heldout(items)
         mock_run.assert_not_called()
         assert result["overall"] == 0.0
+
+
+class TestCompareTeacher:
+    def test_student_memory_vs_teacher_table(self, capsys):
+        items = [
+            _make_item("recovery", "hard", 0),
+            _make_item("recovery", "hard", 1),
+            _make_item("baseline", "easy", 2),
+        ]
+        action = CorrectionAction(
+            triggered_by="execution_accuracy",
+            new_few_shot_examples=[
+                FewShotExample(question="q", correct_output="SELECT 1", domain_id="db")
+            ],
+        )
+
+        def fake_run(item, config, adapter_name="coding", use_rules=True):
+            # student gets Q0 right, Q1 wrong
+            acc = 1.0 if item.question_id.endswith("_0") else 0.0
+            return _make_record(acc, item.difficulty)
+
+        def fake_teacher(item, adapter_name):
+            # teacher gets both right
+            return 1.0
+
+        with (
+            patch("contracts.eventlog.read_events", return_value=[action]),
+            patch("orchestrator._run_item", side_effect=fake_run),
+            patch("orchestrator._teacher_score_item", side_effect=fake_teacher),
+        ):
+            compare_teacher_run(items, adapter_name="coding")
+
+        out = capsys.readouterr().out
+        assert "Student + few-shots/KG" in out
+        assert "Teacher (unaided)" in out
+        assert "0.500" in out  # student mean
+        assert "1.000" in out  # teacher mean
+
+
+class TestAblationArms:
+    def test_arm_env_matrix(self, monkeypatch):
+        import orchestrator as orch
+
+        calls = []
+
+        def fake_run_item(item, config, adapter_name="coding", use_rules=True):
+            import os
+
+            calls.append((os.environ.get("AGENT_USE_EXAMPLES"), use_rules))
+            return TelemetryRecord(
+                run_id=f"{item.question_id}_x",
+                timestamp=0.0,
+                difficulty=Difficulty(item.difficulty),
+                execution_accuracy=1.0,
+                query_valid=True,
+                injection_stats={
+                    "examples_available": 2,
+                    "examples_injected": 0,
+                    "example_ids": [],
+                    "rules_injected": 0,
+                },
+            )
+
+        monkeypatch.setattr(orch, "_run_item", fake_run_item)
+        monkeypatch.setattr(orch, "_load_latest_examples", lambda: [])
+        monkeypatch.setattr(orch, "append_event", lambda *_a, **_k: None)
+
+        items = [
+            FeedItem(
+                question_id="q1",
+                question="?",
+                gold_output="def f(): pass",
+                domain_id="dp",
+                difficulty="hard",
+                phase="recovery",
+            )
+        ]
+
+        result = orch.run_ablation_eval(items, "coding", ["none", "both"])
+
+        assert ("0", False) in calls  # none arm
+        assert ("1", True) in calls  # both arm
+        assert result["none"]["n"] == 1
+        assert result["none"]["zero_injection_pct"] == 100.0

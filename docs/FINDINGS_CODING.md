@@ -1,0 +1,161 @@
+# Findings — Coding Domain (Short-Horizon)
+
+**Updated:** 2026-07-19
+**Scope:** everything measured on the coding adapter to date. Numbers are from
+real runs; nulls are reported as nulls. Sources: `docs/FABLE_HANDOFF.md` §6,
+`docs/superpowers/specs/2026-07-18-diagnostics-ablation-design.md` (results
+section), `runs/*.log`.
+
+## TL;DR
+
+1. The self-improvement loop (drift → teacher few-shots + KG → recovery)
+   **works end-to-end mechanically**: detection fires, teacher repairs verify,
+   memory injects (audit-confirmed).
+2. On a **3B student, memory does not transfer** to held-out hard problems —
+   the binding constraint is student capacity, proven by ablation + McNemar
+   (p ≈ 0.0000 vs a strong model on identical questions).
+3. **Teacher-verified ≠ useful-to-student.** Examples reached prompts
+   (≈2.9/prompt, 0% zero-injection) and still produced no lift — slight
+   (non-significant) harm. Memory quality must be measured by consumer gain,
+   not producer correctness (TraceLift-style executor-grounded utility,
+   [arXiv:2605.03862](https://arxiv.org/abs/2605.03862)).
+4. Student choice is a **band problem**: unaided accuracy must sit ~0.3–0.6 on
+   the target pool or the experiment cannot show learning (too weak = floor,
+   too strong = ceiling). Measured sweep below.
+
+## Timeline of measurements
+
+### A. Classic `--full` loop, 3B student (earlier)
+
+| | Acc |
+|---|---|
+| WITHOUT | 0.273 |
+| WITH (examples + KG) | 0.455 |
+| Δ | **+0.182** |
+
+Single seed; same-distribution recovery stream. This is the loop working when
+the held-out questions have same-topic LEARN neighbors and the pool is small.
+
+### B. Hard-curriculum eval, 3B (the null that started diagnostics)
+
+Student WITHOUT 0.111 → WITH 0.111 (**Δ +0.000**); student+KG vs unaided
+teacher 0.111 vs 1.000 (gap −0.889). Infrastructure fine, no transfer.
+
+### C. Frozen-memory ablation + injection audit, 3B (2026-07-19)
+
+Hard pool expanded to 75 (35 original + 40 imported from MBPP+/HumanEval+ via
+EvalPlus, difficulty-probed at k=2 temp 0.7). n=29 unique held-out hard.
+
+| arm | acc | mean_inj | zero_inj% |
+|---|---:|---:|---:|
+| none | 0.103 | 0.00 | 100 |
+| examples | 0.034 | 2.93 | 0 |
+| rules | 0.103 | 0.00 | 100 |
+| both | 0.034 | 2.93 | 0 |
+
+- **Injection audit:** examples DO reach prompts. Retrieval plumbing is not
+  the failure.
+- **McNemar (vs none):** examples −0.069 (2 discordant, p=0.50 — noise-
+  compatible, cannot claim harm); rules ±0 (p=1.0).
+- **Capacity pair:** `qwen/qwen3-coder` bare 0.931 vs 3B+memory 0.034 —
+  26/29 discordant, **p ≈ 0.0000**. Decision-tree row fired: capacity floor.
+
+### D. Student band sweep (2026-07-19, bare `none` arm, n=29)
+
+| model | unaided acc | verdict |
+|---|---:|---|
+| meta-llama/Llama-3.2-3B-Instruct | 0.103 | too weak (floor) |
+| **mistralai/mistral-nemo (12B)** | **0.414** | **in band** |
+| **Qwen/Qwen3.5-4B** | **0.552** | **in band** |
+| openai/gpt-oss-20b | 0.828 | too strong |
+| qwen/qwen3-coder | 0.931 | too strong (ceiling ref) |
+| qwen/qwen3-8b | 0.966 | too strong |
+
+Dead Prime IDs (404 despite listing): `Qwen/Qwen3.5-2B`, `Qwen/Qwen3.5-9B`,
+`Qwen/Qwen2.5-Coder-7B-Instruct`.
+
+### E. In-band replication runs — mistral-nemo + Qwen3.5-4B
+
+Full ablate pipeline (own learn phase per student, frozen memory, 4 arms +
+capacity leg) launched 2026-07-19; artifacts under `runs/nemo_artifacts/` and
+`runs/qwen35-4b_artifacts/`.
+
+**Nemo (2026-07-19):** learn phase built 17 examples + 3 KG rules (drift fired
+62/140). Curriculum pass showed WITHOUT 0.414 → WITH 0.586 (+0.172), but the
+frozen-memory ablation arms on the same memory did not reproduce it:
+none 0.517 / examples 0.414 / rules 0.414 / both 0.414 (McNemar p=0.375 —
+non-significant). Resolved by the variance protocol below: the true nemo
+memory effect is ≈ 0.
+
+**Qwen3.5-4B (2026-07-19):** learn phase → 11 examples (6 teacher / 3 gold /
+2 anchor) + 3 KG rules. Ablation arms (n=29): none 0.552 / examples **0.310**
+/ rules 0.552 / both 0.310. Examples vs none: Δ −0.241, 13 discordant
+(10 regressed vs 3 improved), p=0.092, 95% CI [−0.473, −0.010].
+
+**Variance protocol (3 repeats × 34 Qs):** fully deterministic — none 0.588
+(sd 0.000, 0 flips), examples 0.324 (sd 0.000, 0 flips), Δ = **−0.265
+identical in every repeat**. The memory bundle deterministically harms this
+student; no noise interpretation available.
+
+**Rules channel is inert on every student:** zero discordant pairs across
+3B, nemo, and qwen — the 3 KG rules never changed a single answer.
+
+### Three-student verdict on the current memory recipe
+
+| Student | band position | memory effect (examples) |
+|---|---|---|
+| Llama-3.2-3B | floor (0.10) | −0.07 ns |
+| mistral-nemo | in band (0.53) | 0.000 (4-repeat confirmed) |
+| Qwen3.5-4B | in band (0.59) | **−0.265 (deterministic, 3-repeat)** |
+
+Capacity was necessary but not sufficient. Topic-filtered teacher exemplars
+range useless → actively harmful regardless of student. **Spine ladder rung 2
+fires** (see ALFWorld B1 spec §9): utility-gated memory bank — a gate scoring
+each memory item by measured student delta would have rejected this entire
+bundle before deployment. Build in coding first, then port.
+
+### F. Temp-0 run-to-run variance (nemo, 4 repeats × 34 held-out Qs)
+
+| arm | mean | sd | range | unstable Qs |
+|---|---:|---:|---|---:|
+| none | 0.529 | 0.000 | [0.529, 0.529] | 5 / 34 |
+| examples | 0.529 | 0.047 | [0.471, 0.588] | 11 / 34 |
+
+Per-repeat Δ(examples−none): +0.059, +0.029, −0.029, −0.059 → mean **0.000**.
+
+- **Nemo null confirmed by repetition** — memory oscillates symmetrically
+  around zero effect. Stronger evidence than any single-run p-value.
+- **Provider nondeterminism is per-question, not aggregate**: identical bare
+  accuracy every repeat while 2–4 questions flip per run and cancel.
+- **Memory injection doubles instability** (11 vs 5 unstable questions) —
+  longer prompts put more items on decision boundaries.
+- **Protocol from here:** deltas < ~0.06 are noise on this stack; paired tests
+  need ≥3 repeats with per-question majority vote before McNemar.
+  (`scripts/variance_check.py`, `runs/variance_nemo.log`.)
+
+## Operational lessons (cost us real runs)
+
+- Prime rate-limits (429) killed a full pipeline; one throttled call had no
+  retry. Fixed: exponential backoff on 429/5xx in student + teacher calls
+  (`adapters/coding.py::_chat_with_retry`, commit `63b1ea5`).
+- Prime's model listing includes IDs that 404 on chat. Smoke-test a model ID
+  with one cheap call before committing a run to it.
+- MiniMax direct API ran out of balance silently earlier — teacher failures
+  must be loud (already fixed via Prime routing, `correction/provider.py`).
+- Deterministic (temp-0) eval + failure-filtered problem selection would make
+  the WITHOUT baseline 0.000 by construction — difficulty probes must run at
+  temp > 0 (probe used k=2 @ 0.7, keep pass-rate ≤ 0.5).
+
+## What this means for the thesis
+
+The claim "a weak student + teacher memory recovers on new hard work" needs
+three preconditions the 3B runs lacked:
+
+1. **Student in the learnable band** (0.3–0.6 unaided) — otherwise floor/ceiling.
+2. **Memory gated by measured student gain**, not teacher verification alone.
+3. **Enough discordant pairs** for paired stats — pool size and band both feed
+   this.
+
+Next milestones (in order): (1) in-band replication (running), (2)
+memory-as-model with executor-grounded utility gating, (3) failure-conditioned
+ICL if utility-gated memory still shows no lift on an in-band student.

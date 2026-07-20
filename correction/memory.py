@@ -1,19 +1,37 @@
 """Example memory: cap and merge few-shot lists across correction cycles."""
 from __future__ import annotations
 
+import os
+
 from contracts.schemas import FewShotExample
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
 
 
 def merge_examples(
     existing: list[FewShotExample],
     new: list[FewShotExample],
-    max_total: int = 32,
-    max_per_db: int = 8,
+    max_total: int | None = None,
+    max_per_db: int | None = None,
 ) -> list[FewShotExample]:
     """Merge new examples into existing, dedupe by (db_id, question), cap per db and total.
 
     FIFO eviction within each db_id when over cap — oldest examples drop first.
+    Env overrides: MEMORY_MAX_TOTAL, MEMORY_MAX_PER_DB (used when args are None).
     """
+    if max_total is None:
+        max_total = _env_int("MEMORY_MAX_TOTAL", 32)
+    if max_per_db is None:
+        max_per_db = _env_int("MEMORY_MAX_PER_DB", 8)
+
     by_key: dict[tuple[str, str], FewShotExample] = {}
     order: list[tuple[str, str]] = []
 
