@@ -7,10 +7,9 @@
 
 ## First: close out v1
 
-- [ ] On `feat/rsi-mem-phase0`: commit whatever exists as
-  `wip: coding pool expansion (parked at v2 pivot)`, push nothing else, stop
-  work there. The coding fixture/probe results stay — harmless, possibly useful
-  for Phase 4b later.
+- [x] On `feat/rsi-mem-phase0`: committed tooling (`71ae446`) + closeout; coding
+  probe parked at 228/448 in `runs/probe_results.jsonl` (gitignored); no
+  held-out manifest claimed. Stopped work there for FinancePro v2.
 
 ## Global constraints
 
@@ -121,7 +120,7 @@ ambiguities → Questions section, do NOT improvise around plan §1–§2 rules.
 
 ## Execution log (Cursor fills in)
 
-- v1 closeout:
+- v1 closeout: DONE 2026-07-20 — probe 228/448 (~183 hard), no merge/manifest; hermetic G0.1–G0.2 tooling in `71ae446` + this closeout commit.
 - Task 1:
 - Task 2:
 - Task 3:
