@@ -123,6 +123,8 @@ def _client_kwargs() -> dict:
     kwargs: dict = {
         "api_key": _api_key(),
         "base_url": _base_url(),
+        # Avoid indefinite hangs on flaky inference endpoints (probe/eval).
+        "timeout": float(os.environ.get("AGENT_TIMEOUT_S", "90")),
     }
     if _is_openrouter():
         # Optional OpenRouter ranking headers (safe defaults).

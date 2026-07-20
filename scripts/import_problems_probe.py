@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Difficulty probe: live 3B student, k samples @ temp>0; keep pass-rate <= 0.5.
+"""Difficulty probe: live student, k samples @ temp>0; keep pass-rate <= 0.5.
 
-Probing at temperature 0.7 (not 0.0) keeps the temp-0 eval baseline honest:
-a problem filtered on a deterministic temp-0 failure would make the WITHOUT
-arm 0.000 by construction.
+Supports chunked resume via runs/probe_results.jsonl (--offset/--limit).
 """
 from __future__ import annotations
 
@@ -18,6 +16,8 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.import_problems import CANDIDATES_PATH, FIXTURE_PATH  # noqa: E402
 
+PROBE_RESULTS_PATH = ROOT / "runs" / "probe_results.jsonl"
+
 
 def select_hard(results: list[tuple[dict, float]], max_keep: int) -> list[dict]:
     """Keep candidates with probe pass-rate <= 0.5, topic-balanced up to max_keep."""
@@ -27,7 +27,6 @@ def select_hard(results: list[tuple[dict, float]], max_keep: int) -> list[dict]:
         by_topic[c["topic"]].append(c)
 
     kept: list[dict] = []
-    # round-robin across topics so scarce topics survive the cap
     pools = sorted(by_topic.items(), key=lambda kv: len(kv[1]))
     while len(kept) < max_keep and any(pool for _, pool in pools):
         for _, pool in pools:
@@ -36,51 +35,90 @@ def select_hard(results: list[tuple[dict, float]], max_keep: int) -> list[dict]:
     return kept
 
 
-def probe(k: int = 2, temperature: float = 0.7, max_keep: int = 40) -> None:
+def _load_done_ids(path: Path) -> dict[str, float]:
+    done: dict[str, float] = {}
+    if not path.exists():
+        return done
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        done[row["id"]] = float(row["pass_rate"])
+    return done
+
+
+def probe(
+    k: int = 2,
+    temperature: float = 0.7,
+    max_keep: int = 400,
+    offset: int = 0,
+    limit: int | None = None,
+    results_path: Path = PROBE_RESULTS_PATH,
+    merge: bool = True,
+) -> None:
     from adapters.coding import generate_code, verify_solution
     from orchestrator import _make_base_config
 
     candidates = json.loads(CANDIDATES_PATH.read_text())
-    # Probe scarce topics first so topic-balanced select_hard can early-stop.
-    topic_rank = {"dp": 0, "graphs": 1, "greedy": 2, "arithmetic": 3, "strings": 4, "arrays": 5}
+    topic_rank = {
+        "dp": 0,
+        "graphs": 1,
+        "greedy": 2,
+        "arithmetic": 3,
+        "strings": 4,
+        "arrays": 5,
+    }
     candidates = sorted(
         candidates, key=lambda p: (topic_rank.get(p["topic"], 9), p["id"])
     )
-    config = _make_base_config("difficulty-probe")  # empty few-shots
+    end = len(candidates) if limit is None else min(len(candidates), offset + limit)
+    chunk = candidates[offset:end]
+    print(
+        f"[probe] candidates={len(candidates)} chunk=[{offset}:{end}] "
+        f"({len(chunk)} to probe) max_keep={max_keep}",
+        flush=True,
+    )
+
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    done = _load_done_ids(results_path)
+    config = _make_base_config("difficulty-probe")
+    by_id = {p["id"]: p for p in candidates}
+
+    with results_path.open("a", encoding="utf-8") as out:
+        for i, p in enumerate(chunk, 1):
+            if p["id"] in done:
+                print(
+                    f"  [{i}/{len(chunk)}] {p['id']} skip (resume) "
+                    f"pass-rate={done[p['id']]:.1f}",
+                    flush=True,
+                )
+                continue
+            passes = 0
+            for _ in range(k):
+                text, *_rest = generate_code(
+                    p["question"],
+                    config,
+                    topic=p["topic"],
+                    use_rules=False,
+                    temperature=temperature,
+                )
+                acc, _, _ = verify_solution(text, p)
+                passes += int(acc == 1.0)
+            rate = passes / k
+            done[p["id"]] = rate
+            out.write(json.dumps({"id": p["id"], "pass_rate": rate, "topic": p["topic"]}) + "\n")
+            out.flush()
+            print(f"  [{i}/{len(chunk)}] {p['id']} pass-rate={rate:.1f}", flush=True)
+
+    if not merge:
+        print(f"[probe] chunk done; results → {results_path} (merge skipped)")
+        return
+
+    # Merge all recorded rates (full candidate set) into fixture.
     results: list[tuple[dict, float]] = []
-    scarce = {"dp", "graphs", "greedy"}
-    scarce_ids = {p["id"] for p in candidates if p["topic"] in scarce}
-
-    for i, p in enumerate(candidates, 1):
-        passes = 0
-        for _ in range(k):
-            text, *_rest = generate_code(
-                p["question"],
-                config,
-                topic=p["topic"],
-                use_rules=False,
-                temperature=temperature,
-            )
-            acc, _, _ = verify_solution(text, p)
-            passes += int(acc == 1.0)
-        rate = passes / k
-        results.append((p, rate))
-        print(f"  [{i}/{len(candidates)}] {p['id']} pass-rate={rate:.1f}", flush=True)
-
-        probed_ids = {c["id"] for c, _ in results}
-        hard_n = sum(1 for _, r in results if r <= 0.5)
-        if (
-            hard_n >= max_keep * 2
-            and scarce_ids.issubset(probed_ids)
-            and len(select_hard(results, max_keep=max_keep)) >= max_keep
-        ):
-            print(
-                f"  early-stop: {hard_n} hard after {i} probes "
-                f"(scarce topics done, max_keep={max_keep})",
-                flush=True,
-            )
-            break
-
+    for pid, rate in done.items():
+        if pid in by_id:
+            results.append((by_id[pid], rate))
     kept = select_hard(results, max_keep=max_keep)
 
     shutil.copy(FIXTURE_PATH, FIXTURE_PATH.with_suffix(".backup.json"))
