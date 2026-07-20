@@ -133,15 +133,17 @@ measured failure, in order — no debate, no vibes:
 Each rung change = one seed, held-out, McNemar, documented in
 `docs/FINDINGS_*` before the next rung is considered.
 
-### 10. Build gate
+### 10. Build gate — RESOLVED 2026-07-19
 
-B1 implementation starts **after** the coding in-band replication chain
-(mistral-nemo + Qwen3.5-4B) lands and its findings are appended to
-`docs/FINDINGS_CODING.md`:
+Coding chain landed: nemo memory effect 0.000 (4 repeats), qwen −0.265
+deterministic harm (see `docs/FINDINGS_CODING.md`). Rung 2 fired.
 
-- If in-band students show real self-lift → port the working recipe to B1 as-is.
-- If null again → rung 2 (utility-gated memory bank) gets built and validated
-  **in the coding domain first** (cheaper iterations), then ported.
+**Direction decision (Rohan, 2026-07-19): coding domain is closed; all further
+work happens in the long-horizon/reasoning track.** The utility-gated memory
+bank (rung 2) is therefore built directly in ALFWorld B1 rather than
+coding-first. Accepted trade-off: episode iterations are slower/costlier than
+single-shot coding calls, so the utility gate's validation set stays small
+(~10 episodes) and gate decisions are logged aggressively to compensate.
 
 ### 11. Testing
 
