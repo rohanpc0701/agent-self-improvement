@@ -35,7 +35,7 @@ def _make_env(split: str):
     """Build a TextWorld ALFWorld env. Requires ALFWORLD_DATA to be populated."""
     import yaml
 
-    import alfworld.agents.environment as environment
+    from alfworld.agents.environment import get_environment
 
     cfg_path = os.environ.get("ALFWORLD_CONFIG")
     if cfg_path:
@@ -70,8 +70,10 @@ def _make_env(split: str):
                 "save_path": "/tmp/alfworld_out",
                 "training": {"batch_size": 1},
             },
+            "dagger": {"training": {"max_nb_steps_per_episode": 50}},
+            "rl": {"training": {"max_nb_steps_per_episode": 50}},
         }
-    env = getattr(environment, config["env"]["type"])(config, train_eval=split)
+    env = get_environment(config["env"]["type"])(config, train_eval=split)
     return env.init_env(batch_size=1)
 
 
