@@ -87,7 +87,32 @@ none 0.517 / examples 0.414 / rules 0.414 / both 0.414 (McNemar p=0.375 —
 non-significant). Resolved by the variance protocol below: the true nemo
 memory effect is ≈ 0.
 
-**Qwen3.5-4B: PENDING — append when the chain completes.**
+**Qwen3.5-4B (2026-07-19):** learn phase → 11 examples (6 teacher / 3 gold /
+2 anchor) + 3 KG rules. Ablation arms (n=29): none 0.552 / examples **0.310**
+/ rules 0.552 / both 0.310. Examples vs none: Δ −0.241, 13 discordant
+(10 regressed vs 3 improved), p=0.092, 95% CI [−0.473, −0.010].
+
+**Variance protocol (3 repeats × 34 Qs):** fully deterministic — none 0.588
+(sd 0.000, 0 flips), examples 0.324 (sd 0.000, 0 flips), Δ = **−0.265
+identical in every repeat**. The memory bundle deterministically harms this
+student; no noise interpretation available.
+
+**Rules channel is inert on every student:** zero discordant pairs across
+3B, nemo, and qwen — the 3 KG rules never changed a single answer.
+
+### Three-student verdict on the current memory recipe
+
+| Student | band position | memory effect (examples) |
+|---|---|---|
+| Llama-3.2-3B | floor (0.10) | −0.07 ns |
+| mistral-nemo | in band (0.53) | 0.000 (4-repeat confirmed) |
+| Qwen3.5-4B | in band (0.59) | **−0.265 (deterministic, 3-repeat)** |
+
+Capacity was necessary but not sufficient. Topic-filtered teacher exemplars
+range useless → actively harmful regardless of student. **Spine ladder rung 2
+fires** (see ALFWorld B1 spec §9): utility-gated memory bank — a gate scoring
+each memory item by measured student delta would have rejected this entire
+bundle before deployment. Build in coding first, then port.
 
 ### F. Temp-0 run-to-run variance (nemo, 4 repeats × 34 held-out Qs)
 
