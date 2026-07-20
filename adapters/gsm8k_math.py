@@ -119,10 +119,19 @@ def generate_math(
             {"role": "user", "content": user},
         ],
         temperature=temperature,
-        max_tokens=512,
+        max_tokens=1024,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
-    text = (resp.choices[0].message.content or "").strip()
+    msg = resp.choices[0].message
+    text = (msg.content or "").strip()
+    if not text:
+        # Some OpenRouter Qwen SKUs put chain-of-thought in reasoning and leave content empty.
+        text = (
+            getattr(msg, "reasoning", None)
+            or getattr(msg, "reasoning_content", None)
+            or ""
+        )
+        text = str(text).strip()
     tokens = resp.usage.total_tokens if resp.usage else 0
     return text, tokens, latency_ms, "", stats
 

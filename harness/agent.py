@@ -13,6 +13,10 @@ Providers (student / hot path):
              export AGENT_BASE_URL=https://api.pinference.ai/api/v1
              export PRIME_API_KEY=...
              export AGENT_MODEL=<cheap open model id>
+  openrouter -> OpenRouter (wide model catalog):
+             export AGENT_BASE_URL=https://openrouter.ai/api/v1
+             export OPENROUTER_API_KEY=...
+             export AGENT_MODEL=<provider/model id>
 
 Teacher (correction stage) stays on MiniMax-M3 via correction/teacher.py
 unless TEACHER_* overrides are set there.
@@ -29,6 +33,7 @@ from contracts.schemas import AgentConfig, FewShotExample
 
 _MINIMAX_BASE_URL = "https://api.minimax.io/v1"
 _PRIME_BASE_URL = "https://api.pinference.ai/api/v1"
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 _client: OpenAI | None = None
 
@@ -52,10 +57,29 @@ def _is_prime() -> bool:
     return "pinference.ai" in url or "primeintellect" in url
 
 
+def _is_openrouter() -> bool:
+    return "openrouter.ai" in _base_url().lower()
+
+
 def _api_key() -> str:
     """Pick the credential that matches the configured student endpoint."""
     if _is_local():
-        return os.environ.get("PRIME_API_KEY") or os.environ.get("MINIMAX_API_KEY") or "ollama"
+        return (
+            os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("PRIME_API_KEY")
+            or os.environ.get("MINIMAX_API_KEY")
+            or "ollama"
+        )
+    if _is_openrouter():
+        key = os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            raise MissingCredentialsError(
+                "OPENROUTER_API_KEY is not set. Add it to .env or export it:\n"
+                "    export OPENROUTER_API_KEY=...\n"
+                "    export AGENT_BASE_URL=https://openrouter.ai/api/v1\n"
+                "    export AGENT_MODEL=<provider/model-id>"
+            )
+        return key
     if _is_prime():
         key = os.environ.get("PRIME_API_KEY") or os.environ.get("PRIME_INTELLECT_API_KEY")
         if not key:
@@ -71,6 +95,9 @@ def _api_key() -> str:
         raise MissingCredentialsError(
             "MINIMAX_API_KEY is not set. Export it in THIS shell before running:\n"
             "    export MINIMAX_API_KEY=sk-...\n"
+            "Or use OpenRouter:\n"
+            "    export AGENT_BASE_URL=https://openrouter.ai/api/v1\n"
+            "    export OPENROUTER_API_KEY=...\n"
             "Or use Prime Intellect:\n"
             "    export AGENT_BASE_URL=https://api.pinference.ai/api/v1\n"
             "    export PRIME_API_KEY=...\n"
@@ -92,14 +119,30 @@ def require_api_key() -> None:
     _api_key()  # raises MissingCredentialsError if missing
 
 
+def _client_kwargs() -> dict:
+    kwargs: dict = {
+        "api_key": _api_key(),
+        "base_url": _base_url(),
+    }
+    if _is_openrouter():
+        # Optional OpenRouter ranking headers (safe defaults).
+        headers = {}
+        referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+        title = os.environ.get("OPENROUTER_APP_TITLE", "agent-self-improvement").strip()
+        if referer:
+            headers["HTTP-Referer"] = referer
+        if title:
+            headers["X-Title"] = title
+        if headers:
+            kwargs["default_headers"] = headers
+    return kwargs
+
+
 def _get_client() -> OpenAI:
     global _client
     if _client is None:
         require_api_key()
-        _client = OpenAI(
-            api_key=_api_key(),
-            base_url=_base_url(),
-        )
+        _client = OpenAI(**_client_kwargs())
     return _client
 
 

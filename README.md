@@ -105,6 +105,22 @@ bash scripts/use_prime_student.sh curriculum
 
 Overrides: `PRIME_AGENT_MODEL=...` (student), `PRIME_TEACHER_MODEL=...` (teacher).
 
+### Coding on OpenRouter (wide model catalog)
+
+Use when you want mid-size / coder models beyond Prime’s inventory (ablation next step: promote student off the 3B floor).
+
+```bash
+# .env
+# OPENROUTER_API_KEY=...
+
+bash scripts/use_openrouter_student.sh list
+bash scripts/use_openrouter_student.sh smoke
+bash scripts/use_openrouter_student.sh curriculum
+```
+
+Defaults: student `qwen/qwen3-coder`, teacher `qwen/qwen3-coder-plus`.  
+Overrides: `OR_AGENT_MODEL=...`, `OR_TEACHER_MODEL=...`.
+
 ### Local student (Ollama) + optional MiniMax teacher
 
 ```bash

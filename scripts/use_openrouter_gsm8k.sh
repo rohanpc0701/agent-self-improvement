@@ -16,8 +16,9 @@ fi
 : "${OPENROUTER_API_KEY:?Add OPENROUTER_API_KEY to .env first}"
 
 export AGENT_BASE_URL="https://openrouter.ai/api/v1"
-# Band-check before claiming; override if unaided hard not in ~0.3–0.6
-export AGENT_MODEL="${OR_AGENT_MODEL:-qwen/qwen3.5-9b}"
+# Prefer in-band student on GSM8K hard (~0.3–0.6 unaided). 7B Qwen saturates (~0.93).
+# Measured: meta-llama/llama-3.2-3b-instruct ≈ 0.47 on 30 held-out hard.
+export AGENT_MODEL="${OR_AGENT_MODEL:-meta-llama/llama-3.2-3b-instruct}"
 
 export TEACHER_USE_OPENROUTER=1
 export TEACHER_USE_PRIME=0

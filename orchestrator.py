@@ -1161,11 +1161,30 @@ def run_hard_curriculum_eval(
 
     if drift_event is None:
         print(
-            "\n[hard-curriculum] WARNING: no drift after hard LEARN. "
-            "KG/examples may be empty — compare will be weak.",
+            "\n[hard-curriculum] WARNING: no drift after hard LEARN.",
             file=sys.stderr,
         )
-    else:
+        # GSM8K / weak-baseline students may never breach the detector even when
+        # hard LEARN fails heavily. Still run uplift-gated correction from failures.
+        if adapter_name == "gsm8k":
+            from contracts.schemas import FailureMode
+
+            drift_event = DriftEvent(
+                detected_at=time.time(),
+                channel="execution_accuracy",
+                severity=0.5,
+                window_mean=0.0,
+                baseline_mean=0.5,
+                failure_mode=FailureMode.VALID_BUT_WRONG,
+                failing_run_ids=[],
+            )
+            print(
+                "[hard-curriculum] Synthesizing DriftEvent so uplift gate can run "
+                "on LEARN failures.",
+                flush=True,
+            )
+
+    if drift_event is not None:
         print("[correction] Building few-shots + KG from hard LEARN failures ...", flush=True)
         failing_cases = _harvest_failing_cases(run_id_map)
         if not failing_cases:
@@ -1200,6 +1219,11 @@ def run_hard_curriculum_eval(
             print("[graph] Writing KG rules from hard failures ...", flush=True)
             n_rules = write_graph_rules(drift_event, failing_cases)
             print(f"  {n_rules} rule(s) in correction/graph_store.json", flush=True)
+    else:
+        print(
+            "[hard-curriculum] KG/examples may be empty — compare will be weak.",
+            file=sys.stderr,
+        )
 
     # Contaminaton-free: student WITHOUT on held-out (optional baseline for the claim)
     print(
