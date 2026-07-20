@@ -92,13 +92,13 @@ def _make_env(split: str):
     return env.init_env(batch_size=1)
 
 
-def _pick_action(client, model: str, history: list[dict]) -> str:
+def _pick_action(client, model: str, history: list[dict], task: str = "") -> str:
+    # Task pinned in system prompt — the goal must survive history truncation.
+    system = _SYSTEM + (f"\n\nYOUR TASK: {task}" if task else "") + "\n\n" + _FORMAT_EXEMPLAR
     resp = _chat_with_retry(
         client,
         model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM + "\n\n" + _FORMAT_EXEMPLAR}
-        ] + history[-12:],
+        messages=[{"role": "system", "content": system}] + history[-12:],
         temperature=0.0,
         max_tokens=256,
     )
@@ -119,6 +119,11 @@ def run_episodes(model: str, n_episodes: int, max_steps: int) -> tuple[int, list
     for ep in range(n_episodes):
         obs, info = env.reset()
         ob = obs[0]
+        task = ""
+        for line in ob.splitlines():
+            if line.strip().lower().startswith("your task is to:"):
+                task = line.split(":", 1)[1].strip()
+                break
         history: list[dict] = []
         won = False
         invalid = 0
@@ -130,7 +135,7 @@ def run_episodes(model: str, n_episodes: int, max_steps: int) -> tuple[int, list
                 f"- {c}" for c in cmds
             )
             history.append({"role": "user", "content": user})
-            action = _pick_action(client, model, history)
+            action = _pick_action(client, model, history, task=task)
             history.append({"role": "assistant", "content": action})
             if action not in cmds:
                 invalid += 1
@@ -160,7 +165,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", required=True)
     ap.add_argument("--episodes", type=int, default=30)
-    ap.add_argument("--max-steps", type=int, default=30)
+    ap.add_argument("--max-steps", type=int, default=50)
     args = ap.parse_args()
 
     print(f"{'=' * 60}\n  ALFWORLD BAND SWEEP (valid_unseen, bare student)\n{'=' * 60}")
