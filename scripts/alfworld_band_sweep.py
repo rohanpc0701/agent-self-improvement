@@ -30,6 +30,21 @@ _SYSTEM = (
     "EXACTLY ONE admissible command — no explanation, no quotes, nothing else."
 )
 
+# Generic action-grammar exemplar (constant scaffolding for ALL models/arms —
+# NOT learned memory; teaches the command format, not any specific task).
+_FORMAT_EXEMPLAR = """Example of how to act (a different task):
+Task: put a mug in the desk.
+> go to shelf 1
+On the shelf 1, you see a mug 2.
+> take mug 2 from shelf 1
+You pick up the mug 2.
+> go to desk 1
+On the desk 1, you see a laptop 1.
+> put mug 2 in/on desk 1
+You put the mug 2 on the desk 1. Task completed.
+
+Now solve YOUR task. One admissible command per reply."""
+
 
 def _make_env(split: str):
     """Build a TextWorld ALFWorld env. Requires ALFWORLD_DATA to be populated."""
@@ -81,7 +96,9 @@ def _pick_action(client, model: str, history: list[dict]) -> str:
     resp = _chat_with_retry(
         client,
         model=model,
-        messages=[{"role": "system", "content": _SYSTEM}] + history[-12:],
+        messages=[
+            {"role": "system", "content": _SYSTEM + "\n\n" + _FORMAT_EXEMPLAR}
+        ] + history[-12:],
         temperature=0.0,
         max_tokens=64,
     )
