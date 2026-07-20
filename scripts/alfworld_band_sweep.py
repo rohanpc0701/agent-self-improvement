@@ -100,9 +100,11 @@ def _pick_action(client, model: str, history: list[dict]) -> str:
             {"role": "system", "content": _SYSTEM + "\n\n" + _FORMAT_EXEMPLAR}
         ] + history[-12:],
         temperature=0.0,
-        max_tokens=64,
+        max_tokens=256,
     )
-    return (resp.choices[0].message.content or "").strip().splitlines()[0].strip()
+    text = (resp.choices[0].message.content or "").strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[0] if lines else ""
 
 
 def run_episodes(model: str, n_episodes: int, max_steps: int) -> tuple[int, list[dict]]:
