@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import uuid
@@ -10,7 +11,12 @@ from pathlib import Path
 from contracts.schemas import AgentConfig, Difficulty, FewShotExample, TelemetryRecord
 from correction.learner import FailingCase
 from harness import agent
-from harness.feed import FeedItem, build_continuous_stream, build_stream
+from harness.feed import (
+    FeedItem,
+    build_continuous_stream,
+    build_hard_curriculum_stream,
+    build_stream,
+)
 
 _FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "gsm8k_subset.json"
 
@@ -20,6 +26,7 @@ _SYSTEM = (
 )
 
 _ANSWER_RE = re.compile(r"####\s*(-?[\d,]+(?:\.\d+)?)")
+_PROMPT_CAP = 5
 
 
 def load_gsm8k_questions() -> list[dict]:
@@ -62,22 +69,48 @@ def verify_answer(output: str, gold: str) -> float | None:
     return 1.0 if abs(g - p) < 1e-6 else 0.0
 
 
-def _examples_block(examples: list[FewShotExample], topic: str) -> str:
-    same = [e for e in examples if not e.domain_id or e.domain_id == topic][:8]
-    if not same:
-        return ""
-    lines = ["Similar solved problems:"]
-    for ex in same:
-        lines.append(f"Q: {ex.question}\nA: #### {ex.correct_output}")
-    return "\n".join(lines) + "\n\n"
+def _use_examples() -> bool:
+    return os.environ.get("AGENT_USE_EXAMPLES", "1") != "0"
+
+
+def build_user_prompt(
+    question: str,
+    config: AgentConfig,
+    topic: str,
+) -> tuple[str, dict]:
+    """Assemble student prompt; report what memory entered it."""
+    stats = {
+        "examples_available": len(config.few_shot_examples),
+        "examples_injected": 0,
+        "example_ids": [],
+        "rules_injected": 0,
+    }
+    parts: list[str] = []
+    if _use_examples():
+        same = [
+            e for e in config.few_shot_examples
+            if not e.domain_id or e.domain_id == topic
+        ][:_PROMPT_CAP]
+        if same:
+            lines = ["Similar solved problems:"]
+            for ex in same:
+                lines.append(f"Q: {ex.question}\nA: #### {ex.correct_output}")
+            parts.append("\n".join(lines) + "\n\n")
+            stats["examples_injected"] = len(same)
+            stats["example_ids"] = [ex.question for ex in same]
+    parts.append(f"Q: {question}\nA:")
+    return "".join(parts), stats
 
 
 def generate_math(
-    question: str, config: AgentConfig, topic: str = "math"
-) -> tuple[str, int, float, str]:
-    """Call the shared OpenAI-compatible client (Ollama or MiniMax)."""
+    question: str,
+    config: AgentConfig,
+    topic: str = "math",
+    temperature: float = 0.0,
+) -> tuple[str, int, float, str, dict]:
+    """Call the shared OpenAI-compatible client."""
     client = agent._get_client()
-    user = _examples_block(config.few_shot_examples, topic) + f"Q: {question}\nA:"
+    user, stats = build_user_prompt(question, config, topic)
     t0 = time.perf_counter()
     resp = client.chat.completions.create(
         model=config.model,
@@ -85,13 +118,31 @@ def generate_math(
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": user},
         ],
-        temperature=0.0,
+        temperature=temperature,
         max_tokens=512,
     )
     latency_ms = (time.perf_counter() - t0) * 1000
     text = (resp.choices[0].message.content or "").strip()
     tokens = resp.usage.total_tokens if resp.usage else 0
-    return text, tokens, latency_ms, ""
+    return text, tokens, latency_ms, "", stats
+
+
+def teacher_solve(question: str) -> str | None:
+    """Unaided teacher numeric answer (#### format preferred)."""
+    from correction.provider import teacher_client_and_model
+
+    client, model = teacher_client_and_model()
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": f"Q: {question}\nA:"},
+        ],
+        temperature=0.0,
+        max_tokens=512,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    return extract_answer(text)
 
 
 class GSM8KMathAdapter:
@@ -128,11 +179,28 @@ class GSM8KMathAdapter:
             baseline_easy_only=True,
         )
 
+    def build_hard_curriculum_feed(
+        self,
+        seed: int,
+        n_baseline: int = 40,
+        n_learn: int = 100,
+        n_heldout: int = 40,
+        db_heldout_frac: float = 0.5,
+    ) -> list[FeedItem]:
+        return build_hard_curriculum_stream(
+            self.load_questions(),
+            n_baseline=n_baseline,
+            n_learn=n_learn,
+            n_heldout=n_heldout,
+            seed=seed,
+            db_heldout_frac=db_heldout_frac,
+        )
+
     def run_item(
         self, item: FeedItem, config: AgentConfig, use_rules: bool = True
     ) -> TelemetryRecord | None:
-        del use_rules  # KG rules are SQL-specific
-        text, tokens, latency_ms, reasoning = generate_math(
+        del use_rules  # KG rules are SQL/coding-specific
+        text, tokens, latency_ms, reasoning, stats = generate_math(
             item.question, config, topic=item.domain_id
         )
         acc = verify_answer(text, item.gold_output)
@@ -154,6 +222,7 @@ class GSM8KMathAdapter:
             db_id=item.domain_id,
             config_id=config.config_id,
             reasoning=reasoning,
+            injection_stats=stats,
         )
 
     def make_examples(

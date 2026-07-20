@@ -285,6 +285,15 @@ def _teacher_score_item(item: FeedItem, adapter_name: str) -> float | None:
         acc, _, _ = verify_solution(f"```python\n{code}\n```", problem)
         return acc
 
+    if adapter_name == "gsm8k":
+        from adapters.gsm8k_math import teacher_solve, verify_answer
+
+        pred = teacher_solve(item.question)
+        if pred is None:
+            return 0.0
+        acc = verify_answer(f"#### {pred}", item.gold_output)
+        return 0.0 if acc is None else acc
+
     # Spider (and similar): teacher SQL vs gold execution
     from correction.teacher import generate_sql as teacher_generate
     from harness.evaluator import execution_accuracy as eval_acc
@@ -536,20 +545,65 @@ def _apply_correction(
     event: DriftEvent,
     failing_cases: list[FailingCase],
     anchor_cases: list[FailingCase],
+    learn_items: list[FeedItem] | None = None,
 ):
     from contracts.schemas import CorrectionAction
+    from correction.tracelift import (
+        build_val_slice,
+        memory_max_total,
+        select_uplift_memory,
+        uplift_enabled,
+    )
 
     adapter = _get_adapter(adapter_name)
     examples = adapter.make_examples(failing_cases, anchor_cases)
+    uplift_note = ""
+
+    # GSM8K: TraceLift-inspired gate — keep only student-positive items, hard-capped.
+    if adapter_name == "gsm8k" and uplift_enabled() and learn_items is not None:
+        os.environ.setdefault("MEMORY_MAX_TOTAL", "5")
+        # Cap probe cost: score at most N gold/anchor candidates on a small val slice.
+        max_cand = int(os.environ.get("UPLIFT_MAX_CANDIDATES", "8"))
+        to_score = examples[:max_cand]
+        cand_qs = {e.question for e in to_score}
+        val_n = int(os.environ.get("UPLIFT_VAL_N", "6"))
+        val = build_val_slice(learn_items, cand_qs, n=val_n)
+        max_keep = memory_max_total(5)
+        k = int(os.environ.get("UPLIFT_K", "1"))
+        print(
+            f"[uplift] Scoring {len(to_score)}/{len(examples)} candidates on "
+            f"{len(val)} LEARN val items (k={k}, max_keep={max_keep}) ...",
+            flush=True,
+        )
+        student_cfg = _make_base_config("uplift-student")
+        kept, scored = select_uplift_memory(
+            adapter,
+            student_cfg,
+            to_score,
+            val,
+            max_keep=max_keep,
+            k=k,
+            min_u=0.0,
+        )
+        for ex, u in scored[:8]:
+            print(f"  u={u:+.3f}  {ex.question[:55]}", flush=True)
+        uplift_note = (
+            f" Uplift-gated: kept {len(kept)}/{len(examples)} "
+            f"(max_keep={max_keep}, val_n={len(val)})."
+        )
+        examples = kept
+
     n_teacher = sum(1 for e in examples if e.source == "teacher")
     n_gold = sum(1 for e in examples if e.source == "gold")
     n_anchor = sum(1 for e in examples if e.source == "anchor")
+    n_uplift = sum(1 for e in examples if e.source == "uplift")
     rationale = (
         f"Drift on {event.channel}: window={event.window_mean:.3f}, "
         f"baseline={event.baseline_mean:.3f}, severity={event.severity:.3f}. "
         f"failure_mode={event.failure_mode.value}. "
         f"Injecting {len(examples)} examples "
-        f"({n_teacher} teacher-verified, {n_gold} gold-fallback, {n_anchor} anchor)."
+        f"({n_teacher} teacher, {n_gold} gold, {n_anchor} anchor, "
+        f"{n_uplift} uplift).{uplift_note}"
     )
     return CorrectionAction(
         triggered_by=event.channel,
@@ -1059,15 +1113,21 @@ def run_hard_curriculum_eval(
 
     Designed as an evaluation story, not a balanced demo stream.
     """
-    if adapter_name != "coding":
+    if adapter_name not in ("coding", "gsm8k"):
         print(
-            "[hard-curriculum] Currently implemented for --adapter coding "
-            "(hard coding + unit-test teacher compare).",
+            "[hard-curriculum] Supported adapters: coding, gsm8k.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     adapter = _get_adapter(adapter_name)
+    if not hasattr(adapter, "build_hard_curriculum_feed"):
+        print(
+            f"[hard-curriculum] adapter={adapter_name} lacks "
+            "build_hard_curriculum_feed.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     items = adapter.build_hard_curriculum_feed(
         seed=_SEED,
         n_baseline=n_baseline,
@@ -1117,20 +1177,29 @@ def run_hard_curriculum_eval(
             f"{len(anchor_cases)} anchors",
             flush=True,
         )
-        action = _apply_correction(adapter_name, drift_event, failing_cases, anchor_cases)
+        learn_items = [it for it in items if it.phase == "degraded"]
+        action = _apply_correction(
+            adapter_name,
+            drift_event,
+            failing_cases,
+            anchor_cases,
+            learn_items=learn_items,
+        )
         append_event(action)
         print(
             f"  CorrectionAction: {len(action.new_few_shot_examples)} examples — "
             f"{sum(1 for e in action.new_few_shot_examples if e.source == 'teacher')} teacher, "
             f"{sum(1 for e in action.new_few_shot_examples if e.source == 'gold')} gold, "
-            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'anchor')} anchor",
+            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'anchor')} anchor, "
+            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'uplift')} uplift",
             flush=True,
         )
-        from adapters.coding import write_graph_rules
+        if adapter_name == "coding":
+            from adapters.coding import write_graph_rules
 
-        print("[graph] Writing KG rules from hard failures ...", flush=True)
-        n_rules = write_graph_rules(drift_event, failing_cases)
-        print(f"  {n_rules} rule(s) in correction/graph_store.json", flush=True)
+            print("[graph] Writing KG rules from hard failures ...", flush=True)
+            n_rules = write_graph_rules(drift_event, failing_cases)
+            print(f"  {n_rules} rule(s) in correction/graph_store.json", flush=True)
 
     # Contaminaton-free: student WITHOUT on held-out (optional baseline for the claim)
     print(
@@ -1145,7 +1214,7 @@ def run_hard_curriculum_eval(
 
     # Headline eval: student+memory vs unaided teacher on new hard problems
     print(
-        "\n[hard-curriculum] Freeze memory — compare student+KG vs teacher "
+        "\n[hard-curriculum] Freeze memory — compare student+memory vs teacher "
         "on held-out hard ...",
         flush=True,
     )
@@ -1200,13 +1269,21 @@ def run_full_loop(
             f"{len(anchor_cases)} anchors",
             flush=True,
         )
-        action = _apply_correction(adapter_name, drift_event, failing_cases, anchor_cases)
+        learn_items = [it for it in items if it.phase == "degraded"]
+        action = _apply_correction(
+            adapter_name,
+            drift_event,
+            failing_cases,
+            anchor_cases,
+            learn_items=learn_items,
+        )
         append_event(action)
         print(
             f"  CorrectionAction: {len(action.new_few_shot_examples)} examples — "
             f"{sum(1 for e in action.new_few_shot_examples if e.source == 'teacher')} teacher, "
             f"{sum(1 for e in action.new_few_shot_examples if e.source == 'gold')} gold, "
-            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'anchor')} anchor",
+            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'anchor')} anchor, "
+            f"{sum(1 for e in action.new_few_shot_examples if e.source == 'uplift')} uplift",
             flush=True,
         )
         print(f"  rationale: {action.rationale}", flush=True)
@@ -1320,7 +1397,10 @@ def run_continuous_loop(
         if not failing_cases:
             failing_cases = _build_failing_cases(ev, run_id_map)
         anchor_cases = _pick_anchors(baseline_items, baseline_recs)
-        action = _apply_correction(adapter_name, ev, failing_cases, anchor_cases)
+        learn_items = [it for it in items if it.phase == "degraded"]
+        action = _apply_correction(
+            adapter_name, ev, failing_cases, anchor_cases, learn_items=learn_items
+        )
         append_event(action)
         correction_count += 1
         print(
