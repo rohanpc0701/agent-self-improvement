@@ -8,12 +8,18 @@ The LEARN/HELD-OUT split is the key benchmark-credibility guarantee: the agent c
 regurgitate examples it was given — it must generalize to questions it has never seen.
 
 Fast REPLAY mode: pre-compute the full stream once, replay instantly on stage.
+
+When HELDOUT_MANIFEST points at a frozen manifest JSON, LEARN/HELD-OUT pools come
+from that split (RSI-Mem honesty rule) instead of re-splitting.
 """
 from __future__ import annotations
 
+import json
+import os
 import random
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator
 
 
@@ -25,6 +31,32 @@ class FeedItem:
     domain_id: str  # Spider db_id, coding topic, etc.
     difficulty: str
     phase: str   # "baseline" | "degraded" | "recovery"
+
+
+def _load_manifest_pools(
+    hard_extra: list[dict],
+) -> tuple[list[dict], list[dict]] | None:
+    """If HELDOUT_MANIFEST is set, return (learn_pool, heldout_pool) from it."""
+    path = os.environ.get("HELDOUT_MANIFEST", "").strip()
+    if not path:
+        return None
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"HELDOUT_MANIFEST not found: {path}")
+    m = json.loads(p.read_text())
+    by_id = {q["id"]: q for q in hard_extra}
+    missing_h = [i for i in m["heldout_ids"] if i not in by_id]
+    missing_l = [i for i in m["learn_ids"] if i not in by_id]
+    if missing_h or missing_l:
+        raise ValueError(
+            f"Manifest ids missing from fixture: "
+            f"heldout={missing_h[:5]} learn={missing_l[:5]}"
+        )
+    # LEARN stream = learn_ids ∪ validation_ids (validation is LEARN-side only)
+    learn_ids = list(m["learn_ids"]) + list(m.get("validation_ids") or [])
+    learn_pool = [by_id[i] for i in learn_ids if i in by_id]
+    heldout_pool = [by_id[i] for i in m["heldout_ids"]]
+    return learn_pool, heldout_pool
 
 
 def _split_hard(
@@ -95,6 +127,8 @@ def build_stream(
     schemas a weak base model fails ~50% of "medium" questions, so an easy+medium baseline
     is noisy (~0.60) and dips far enough to false-trigger the drift detector BEFORE the
     change-point. Easy-only gives the stable-high baseline the change-point story requires.
+
+    If HELDOUT_MANIFEST is set, LEARN/HELD-OUT pools are taken from that frozen split.
     """
     rng = random.Random(seed)
     baseline_difficulties = ("easy",) if baseline_easy_only else ("easy", "medium")
@@ -109,8 +143,13 @@ def build_stream(
     if not hard_extra:
         raise ValueError("No hard/extra questions — run fixtures/prepare_spider.py first")
 
-    if same_db_split:
-        learn_pool, heldout_pool = _split_hard_by_db(hard_extra, rng, heldout_frac=db_heldout_frac)
+    manifest_pools = _load_manifest_pools(hard_extra)
+    if manifest_pools is not None:
+        learn_pool, heldout_pool = manifest_pools
+    elif same_db_split:
+        learn_pool, heldout_pool = _split_hard_by_db(
+            hard_extra, rng, heldout_frac=db_heldout_frac
+        )
     else:
         learn_pool, heldout_pool = _split_hard(hard_extra, learn_frac, rng)
 
@@ -201,7 +240,10 @@ def build_continuous_stream(
     if not easy_med or not hard_extra:
         raise ValueError("Need easy/medium and hard/extra questions — run prepare_spider.py")
 
-    if same_db_split:
+    manifest_pools = _load_manifest_pools(hard_extra)
+    if manifest_pools is not None:
+        learn_pool, heldout_pool = manifest_pools
+    elif same_db_split:
         learn_pool, heldout_pool = _split_hard_by_db(hard_extra, rng, heldout_frac=db_heldout_frac)
     else:
         learn_pool, heldout_pool = _split_hard(hard_extra, 0.5, rng)

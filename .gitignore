@@ -19,3 +19,5 @@ correction/graph_store.json
 fixtures/imported_candidates.json
 fixtures/coding_subset.backup.json
 runs/
+# probe resume log (intermediate); final fixture+manifest are committed
+# runs/probe_results.jsonl lives under runs/

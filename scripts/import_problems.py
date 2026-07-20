@@ -236,8 +236,20 @@ def main() -> None:
     ap.add_argument(
         "--max-keep",
         type=int,
-        default=40,
-        help="cap on new hard problems appended to the fixture",
+        default=400,
+        help="cap on new hard problems appended to the fixture (default 400)",
+    )
+    ap.add_argument("--offset", type=int, default=0, help="probe chunk start index")
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="probe at most this many candidates in this invocation",
+    )
+    ap.add_argument(
+        "--no-merge",
+        action="store_true",
+        help="probe chunk only; do not append to coding_subset.json yet",
     )
     args = ap.parse_args()
     if args.stage == "fetch":
@@ -245,7 +257,14 @@ def main() -> None:
     else:
         from scripts.import_problems_probe import probe
 
-        probe(k=args.k, temperature=args.temperature, max_keep=args.max_keep)
+        probe(
+            k=args.k,
+            temperature=args.temperature,
+            max_keep=args.max_keep,
+            offset=args.offset,
+            limit=args.limit,
+            merge=not args.no_merge,
+        )
 
 
 if __name__ == "__main__":
