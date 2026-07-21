@@ -170,7 +170,11 @@ def load_memory(path: Path) -> list[FewShotExample]:
 def done_keys(state_path: Path, kind: str) -> set[str]:
     keys: set[str] = set()
     for row in _load_jsonl(state_path):
-        if row.get("kind") == kind and row.get("ok"):
+        if row.get("kind") != kind:
+            continue
+        # Count both success and recorded failures so we don't retry forever
+        # on persistent judge/API errors.
+        if row.get("ok") or row.get("error"):
             keys.add(str(row.get("key")))
     return keys
 

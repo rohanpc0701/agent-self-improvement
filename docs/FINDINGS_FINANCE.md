@@ -171,6 +171,32 @@ State: `runs/finance_tracelift_state.jsonl`. Verbatim from first LIVE chunk:
 - First LIVE candidate chunk distilled **3** items for `fpb-00106` (playbook/trap/skeleton) then rows were lost from state (concurrent runner / file race). Rebuild in progress via `--phase all` loop.
 - Teacher GLM 5.2: ≈3–4 min per repair at `TEACHER_MAX_TOKENS=4000`.
 
+
+### Candidate rebuild (isolated agent state)
+
+State: `runs/finance_tracelift_state_agent.jsonl` (isolated from concurrent runners that archived the main state).
+
+| key | usable? | notes |
+|-----|:-------:|-------|
+| fpb-00106:playbook | no | empty after entity scrub (pre-fix) |
+| fpb-00106:trap | yes | generic fallback trap |
+| fpb-00106:playbook:v2 | yes | category fallback (teacher returned empty content once) |
+| fpb-00106:skeleton:v2 | yes | category fallback skeleton |
+
+### Uplift gate attempts (val_n=1, K=1)
+
+Verbatim errors from gate logs:
+
+- trap: `missing TOTAL line`
+- trap retry: `empty judge output`
+- playbook:v2: `empty judge output`
+
+**Admitted: 0. Frozen store n=0.** Judge empty/TOTAL failures on the uplift path blocked admission despite usable candidates.
+
+### Concurrent-runner interference
+
+A parallel `/tmp/finance_tracelift_loop.sh` / fast-lane process archived/replaced `runs/finance_tracelift_*` mid-session; subsequent work used `*_agent.jsonl` paths.
+
 ### Uplift gate / freeze
 
 - Protocol target: val_n=80, K=2, keep u_norm > +1, stop on window(15) mean u < +0.5 or admit rate < 20%.
