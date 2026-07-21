@@ -269,13 +269,14 @@ run-to-run student/judge nondeterminism. Same 7 Credit/Trading held-out, good
 | fpb-00364 | Trading | 2.1 | 5.0 | +2.9 | +0.0 |
 | fpb-00006 | Credit | 26.2 | 18.3 | −7.9 | +4.8 |
 | fpb-00380 | Trading | 49.6 | 36.3 | **−13.2** | **+17.9** |
+| fpb-00111 | Credit | 21.9 | 34.2 | +12.3 | +6.6 |
 | fpb-00108 | Credit | SKIP (rubric lacks `Item R*(max N)`) | | | |
-| **mean** | | **24.7** | **22.3** | **GAP = −2.4** | (single-pass +5.6) |
+| **mean** | | **24.3** | **24.3** | **GAP = +0.0** | (single-pass +5.6) |
 
 ### Verdict: the +5.6 was noise; averaged GAP is null-to-negative
 
 - The single-pass headline (+5.6) **did not survive averaging** — averaged GAP
-  ≈ **−2.4**. The largest positive contributor, fpb-00380 (+17.9 single-pass),
+  = **+0.0** (n=6; per-Q deltas −0.8, +6.9, +2.9, −7.9, −13.2, +12.3 — swinging ±13, summing to zero). The largest positive contributor, fpb-00380 (+17.9 single-pass),
   **reversed to −13.2** under k=3 on identical temp-0 inputs.
 - Per-question temp-0 nondeterminism is **±10–20 normalized pts** (e.g. fpb-00364
   A1 = 27.5 single-pass vs 2.1 here; fpb-00006 +4.8 → −7.9). Single-pass deltas
@@ -295,8 +296,8 @@ That noise discipline is the durable asset.
   → injection → judge). Distillation quality fix (commit 4d81ef6) is real and
   necessary — boilerplate memory hurt (−6.1), good memory is at least not
   harmful on average.
-- **NOT established:** that TraceLift memory helps. Averaged signal is ~null
-  (−2.4, n=5, no CI). Honest read: no reliable lift.
+- **NOT established:** that TraceLift memory helps. Averaged signal is a clean null
+  (+0.0, n=6, no CI). Honest read: no reliable lift.
 - Caveats: n=5, Credit/Trading only, ungated memory (harness gating unreliable),
   one question unscoreable (rubric format).
 

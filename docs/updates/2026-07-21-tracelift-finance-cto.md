@@ -7,7 +7,7 @@
 
 ## Bottom line
 
-**TraceLift did not reliably improve the student.** A first single-pass run looked positive (+5.6 normalized points, which would have cleared our +4 success bar), but that result was **measurement noise** — under 3 averaged repeats the gap collapsed to **−2.4** (null-to-negative). We are reporting the null, not the +5.6.
+**TraceLift did not reliably improve the student.** A first single-pass run looked positive (+5.6 normalized points, which would have cleared our +4 success bar), but that result was **measurement noise** — under 3 averaged repeats the gap collapsed to **+0.0** — a clean null (n=6). We are reporting the null, not the +5.6.
 
 This is now the **third domain** — after coding and GSM8K — where teacher-built in-context memory fails to transfer once run-to-run noise is averaged out.
 
@@ -24,7 +24,7 @@ This is now the **third domain** — after coding and GSM8K — where teacher-bu
 | Memory quality | Single pass | 3-repeat average |
 |---|---:|---:|
 | Boilerplate (first distillation) | GAP −6.1 (hurt) | — |
-| Good (fixed distillation) | GAP **+5.6** | GAP **−2.4** |
+| Good (fixed distillation) | GAP **+5.6** | GAP **+0.0** |
 
 The single-pass +5.6 was driven mostly by one question that scored +17.9; on identical (temperature-0) re-runs that same question came back **−13.2**. Per-question noise on this stack is **±10–20 points**, so any single-pass delta smaller than ~15 points is not trustworthy.
 
@@ -35,7 +35,7 @@ The single-pass +5.6 was driven mostly by one question that scored +17.9; on ide
 
 ## Honest caveats (on the null too)
 
-- Small sample (5 scored held-out questions; 2 lost to judge/rubric parsing issues), Credit/Trading categories only, no confidence interval. This is "no reliable lift," not "proven exactly zero."
+- Small sample (6 scored held-out questions; 1 lost to judge/rubric parsing issues), Credit/Trading categories only, no confidence interval. This is "no reliable lift," not "proven exactly zero."
 - We bypassed TraceLift's uplift-gate (the harness stage that filters memory to only items that measurably help) because it was unreliable in this run. In principle a working gate could isolate a helping subset — but nothing in the current evidence suggests a meaningful effect to isolate.
 
 ## Recommendation
