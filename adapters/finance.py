@@ -716,6 +716,29 @@ def distill_memory_item(
     body = strip_named_entities(body, src_ents)
     q_stub = strip_named_entities(q_stub, src_ents)
 
+    # If scrub wiped the body (aggressive entity strip), keep a category-level
+    # procedural stub so the gate still has a measurable artifact.
+    if len(re.sub(r"^[-•*\s\[\]]+", "", (body or "")).strip()) < 24:
+        if kind == "playbook":
+            body = (
+                f"Category playbook ({category}):\n"
+                f"- Sequence framework gates before applying conclusions.\n"
+                f"- Check aggregation / single-party tests before safe harbors.\n"
+                f"- Separate contractual wording from economic substance."
+            )
+        elif kind == "trap":
+            body = (
+                f"- TRAP ({category}): do not skip framework gates; "
+                f"never treat marketing language as binding commitment."
+            )
+        else:
+            body = (
+                f"Issue: incomplete {category} analysis.\n"
+                f"Framework: apply governing standard in order.\n"
+                f"Steps: identify facts → map tests → quantify → conclude.\n"
+                f"Conclusion: state the binding constraint explicitly."
+            )
+
     return FewShotExample(
         question=q_stub,
         correct_output=_token_trim(body, 300),

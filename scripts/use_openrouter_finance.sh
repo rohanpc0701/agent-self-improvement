@@ -35,11 +35,15 @@ export JUDGE_API_KEY="$OPENROUTER_API_KEY"
 export JUDGE_MODEL="${JUDGE_MODEL:-openai/gpt-5.2}"
 
 export AGENT_TIMEOUT_S="${AGENT_TIMEOUT_S:-120}"
+# OpenRouter qwen3.6: large bare budget; avoid enable_thinking=false (ignored → empty content).
+export STUDENT_MAX_TOKENS="${STUDENT_MAX_TOKENS:-8192}"
+unset AGENT_FORCE_NO_THINKING 2>/dev/null || true
 
 echo "== finance on OpenRouter =="
 echo "  student : $STUDENT_MODEL"
 echo "  teacher : $TEACHER_MODEL"
 echo "  judge   : $JUDGE_MODEL"
+echo "  student_max_tokens : $STUDENT_MAX_TOKENS"
 echo
 
 if [[ "${1:-}" == *.py ]] || [[ "${1:-}" == scripts/* ]]; then

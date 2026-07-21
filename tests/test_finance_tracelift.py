@@ -53,12 +53,32 @@ class TestUNorm:
         assert abs(tl.u_normalized(0.01) - 1.0) < 1e-9
 
 
+class TestUsableCandidate:
+    def test_rejects_empty_playbook(self):
+        ex = FewShotExample(
+            question="[FINANCE_PLAYBOOK] Credit",
+            correct_output="Category playbook (Credit):\n-",
+            domain_id="Credit",
+            source="tracelift",
+        )
+        assert not tl._is_usable_candidate(ex)
+
+    def test_accepts_trap(self):
+        ex = FewShotExample(
+            question="[FINANCE_TRAP] Credit",
+            correct_output="- TRAP (Credit): verify framework gates before safe harbors.",
+            domain_id="Credit",
+            source="tracelift",
+        )
+        assert tl._is_usable_candidate(ex)
+
+
 class TestGateWithMockAdapter:
     def test_admits_positive_uplift(self, tmp_path: Path):
         state = tmp_path / "state.jsonl"
         cand = FewShotExample(
             question="[FINANCE_PLAYBOOK] Accounting",
-            correct_output="gate equity first",
+            correct_output="Always gate equity sufficiency before voting model; check ASC sequence.",
             domain_id="Accounting",
             source="tracelift",
         )

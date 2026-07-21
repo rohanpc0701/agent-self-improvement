@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 import time
 from collections import deque
@@ -34,7 +35,6 @@ from adapters.finance import (  # noqa: E402
 )
 from contracts.schemas import AgentConfig, FewShotExample  # noqa: E402
 from correction.judge import JudgeParseError, grade, rubric_max_points  # noqa: E402
-from correction.tracelift import estimate_uplift  # noqa: E402
 from harness.feed import FeedItem  # noqa: E402
 
 RUNS = ROOT / "runs"
@@ -223,11 +223,10 @@ def collect_train_failures(
             n_new += 1
             continue
         try:
-            # Thinking SKUs often need a large budget; start high to avoid
-            # empty-content → 8k/16k retry loops that blow the time budget.
-            max_tok = int(os.environ.get("STUDENT_MAX_TOKENS", "8192"))
+            # STUDENT_MAX_TOKENS (default 8192) via generate_answer — avoid
+            # empty-content retry loops that blow the LIVE chunk budget.
             answer, _stats = generate_answer(
-                p["question"], cfg, category=p["category"], max_tokens=max_tok
+                p["question"], cfg, category=p["category"]
             )
             result = grade(question=p["question"], rubric=p["rubric"], answer=answer)
             norm = float(result["normalized"])
@@ -326,6 +325,43 @@ def build_candidates_from_failures(
     return uniq
 
 
+def _candidate_key(cand: FewShotExample) -> str:
+    return f"{cand.domain_id}|{cand.question}|{(cand.correct_output or '')[:40]}"
+
+
+def _is_usable_candidate(cand: FewShotExample) -> bool:
+    """Skip empty / near-empty distillations (teacher scrub wipeouts)."""
+    body = (cand.correct_output or "").strip()
+    meaningful = re.sub(r"^Category playbook \([^)]+\):\s*", "", body, flags=re.I)
+    meaningful = re.sub(r"^[-•*\s]+", "", meaningful).strip()
+    return len(meaningful) >= 24
+
+
+def _mean_scores(
+    adapter: FinanceAdapter,
+    cfg: AgentConfig,
+    items: list[FeedItem],
+    k: int,
+) -> list[float]:
+    scores: list[float] = []
+    for item in items:
+        for _ in range(k):
+            rec = adapter.run_item(item, cfg, use_rules=False)
+            if rec is not None:
+                scores.append(float(rec.execution_accuracy))
+    return scores
+
+
+def _val_slice_for_candidate(
+    cand: FewShotExample, val_items: list[FeedItem], *, min_n: int = 3
+) -> list[FeedItem]:
+    """Prefer same-category validation (memory is category-keyed); else full slice."""
+    same = [it for it in val_items if (it.domain_id or "") == (cand.domain_id or "")]
+    if len(same) >= min_n:
+        return same
+    return list(val_items)
+
+
 def gate_candidates(
     candidates: list[FewShotExample],
     student_model: str,
@@ -339,7 +375,11 @@ def gate_candidates(
     resume: bool = True,
     adapter: FinanceAdapter | None = None,
 ) -> tuple[list[FewShotExample], list[dict]]:
-    """Uplift-gate candidates; return (admitted, scored rows with u_norm)."""
+    """Uplift-gate candidates; return (admitted, scored rows with u_norm).
+
+    Bare (no-memory) student scores are cached per validation-id set so we do
+    not re-run the empty-prompt arm once per candidate.
+    """
     ad = adapter or FinanceAdapter()
     cfg = AgentConfig(config_id="tracelift-uplift", model=student_model, few_shot_examples=[])
     done = done_keys(state_path, "uplift") if resume else set()
@@ -359,8 +399,14 @@ def gate_candidates(
     for row in scored:
         recent_u.append(float(row.get("u_norm", 0.0)))
 
-    for i, cand in enumerate(candidates):
-        key = f"{cand.domain_id}|{cand.question}|{cand.correct_output[:40]}"
+    bare_cache: dict[tuple[str, ...], list[float]] = {}
+    usable = [c for c in candidates if _is_usable_candidate(c)]
+    skipped = len(candidates) - len(usable)
+    if skipped:
+        print(f"[tracelift/uplift] skipping {skipped} empty/weak candidates", flush=True)
+
+    for i, cand in enumerate(usable):
+        key = _candidate_key(cand)
         if key in done:
             continue
         if max_new is not None and n_new >= max_new:
@@ -383,8 +429,26 @@ def gate_candidates(
             )
             break
 
+        slice_items = _val_slice_for_candidate(cand, val_items)
+        cache_key = tuple(sorted(it.question_id for it in slice_items))
         try:
-            u_acc = estimate_uplift(ad, cfg, cand, val_items, k=k)
+            if cache_key not in bare_cache:
+                print(
+                    f"  [uplift] computing bare baseline on n={len(slice_items)} k={k} …",
+                    flush=True,
+                )
+                bare_cache[cache_key] = _mean_scores(ad, cfg, slice_items, k)
+            bare_scores = bare_cache[cache_key]
+            with_cfg = cfg.model_copy(
+                update={"few_shot_examples": [cand], "config_id": "uplift-with"}
+            )
+            with_scores = _mean_scores(ad, with_cfg, slice_items, k)
+            if not bare_scores or not with_scores:
+                u_acc = 0.0
+            else:
+                u_acc = (sum(with_scores) / len(with_scores)) - (
+                    sum(bare_scores) / len(bare_scores)
+                )
             u_norm = u_normalized(u_acc)
         except Exception as exc:
             print(f"  [uplift] {key[:60]} FAILED ({exc})", flush=True)
@@ -411,6 +475,8 @@ def gate_candidates(
             "example": cand.model_dump() if keep else None,
             "mem_kind": cand.question.split()[0] if cand.question else "",
             "domain_id": cand.domain_id,
+            "val_n": len(slice_items),
+            "k": k,
             "ts": time.time(),
         }
         _append_jsonl(state_path, row)
@@ -420,8 +486,9 @@ def gate_candidates(
             admitted.append(cand)
         n_new += 1
         print(
-            f"  [uplift {i+1}/{len(candidates)}] u_norm={u_norm:+.2f} "
-            f"{'ADMIT' if keep else 'reject'} {cand.domain_id}",
+            f"  [uplift {i+1}/{len(usable)}] u_norm={u_norm:+.2f} "
+            f"{'ADMIT' if keep else 'reject'} {cand.domain_id} "
+            f"(val_n={len(slice_items)})",
             flush=True,
         )
     return admitted, scored
@@ -453,7 +520,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--student-model", default=os.environ.get("STUDENT_MODEL", DEFAULT_STUDENT))
     ap.add_argument("--state", type=Path, default=DEFAULT_STATE)
     ap.add_argument("--memory-out", type=Path, default=DEFAULT_MEMORY)
-    ap.add_argument("--val-n", type=int, default=None, help="Validation slice size (default: all 80)")
+    ap.add_argument(
+        "--val-n",
+        type=int,
+        default=int(os.environ.get("FINANCE_UPLIFT_VAL_N", "12")),
+        help="Validation slice size (default 12; plan text says 80 — cost tradeoff)",
+    )
     ap.add_argument("--k", type=int, default=UPLIFT_K)
     ap.add_argument("--fail-threshold", type=float, default=FAIL_THRESHOLD)
     ap.add_argument("--min-u", type=float, default=MIN_U_NORM, help="Min u in normalized pts")
