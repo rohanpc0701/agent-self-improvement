@@ -50,13 +50,14 @@ class TestParse:
         assert "B1" in out["bonuses"]
         assert abs(out["normalized"] - (13 / 18) * 100) < 1e-6
 
-    def test_malformed_then_repaired(self):
+    def test_missing_total_with_items_uses_fallback(self):
+        # Missing TOTAL but scorable R items → reconstruct total, don't raise.
         bad = "R1: 5 — something\n(no total)"
-        with pytest.raises(JudgeParseError):
-            parse_judge_output(bad, max_points=18.0)
-        # After repair, clean parse works
-        out = parse_judge_output(CLEAN, max_points=18.0)
-        assert out["total"] == 13.0
+        out = parse_judge_output(bad, max_points=18.0)
+        assert out["total"] == 5.0
+        # Clean parse still works and prefers the explicit TOTAL line.
+        out2 = parse_judge_output(CLEAN, max_points=18.0)
+        assert out2["total"] == 13.0
 
     def test_traps_and_bonuses(self):
         raw = "R1: 0 — none\ntrap T2: −5\nB3: +1\nTOTAL: 0\n"
@@ -64,9 +65,10 @@ class TestParse:
         assert out["traps_hit"] == ["T2"]
         assert out["bonuses"] == ["B3"]
 
-    def test_missing_total_errors(self):
+    def test_missing_total_no_items_errors(self):
+        # No TOTAL and no scorable items → unrecoverable, must raise.
         with pytest.raises(JudgeParseError, match="TOTAL"):
-            parse_judge_output("R1: 1 — x\n", max_points=10.0)
+            parse_judge_output("just prose, no scores\n", max_points=10.0)
 
     def test_bold_total_accepted(self):
         raw = "R1: 5 — x\n**TOTAL: 5**\n"
@@ -88,7 +90,9 @@ class TestRepairRetry:
     """Missing TOTAL / empty output must trigger one repair-retry before hard failure."""
 
     def test_one_pass_retries_then_succeeds(self):
-        missing = "R1: 10 — cites ASC 810\nR2: 4 — partial\n"  # no TOTAL
+        # Genuinely unparseable (no TOTAL, no R items) → triggers repair-retry.
+        # (missing-TOTAL-WITH-items now succeeds via deterministic fallback.)
+        missing = "This response has no structured scores at all.\n"
         calls: list[str] = []
 
         def fake_chat(client, *, model, messages, temperature, max_tokens):
@@ -145,7 +149,8 @@ class TestRepairRetry:
         assert out["total"] == 13.0
 
     def test_one_pass_retries_then_still_raises(self):
-        missing = "R1: 1 — x\n"
+        # Unparseable on both passes (no items, no TOTAL) → still raises.
+        missing = "no scores here either\n"
 
         def fake_chat(client, *, model, messages, temperature, max_tokens):
             return _fake_chat_response(missing)
@@ -198,3 +203,25 @@ class TestJudgeNeTeacher:
         import correction.judge as j
 
         assert j.JUDGE_MODEL != j.TEACHER_MODEL
+
+
+def test_total_fallback_from_items_when_total_missing():
+    from correction.judge import parse_judge_output
+    # No TOTAL line — must reconstruct from R items minus traps plus bonuses.
+    raw = (
+        "R1: 8 — solid framework\n"
+        "R2: 5 — partial calc\n"
+        "trap T3: -4 aggregation error\n"
+        "bonus B1: +2 nice synthesis\n"
+    )
+    out = parse_judge_output(raw, max_points=20.0)
+    assert out["total"] == 8 + 5 - 4 + 2  # 11
+    assert out["traps_hit"] == ["T3"]
+    assert out["items"] == {"R1": 8.0, "R2": 5.0}
+
+
+def test_still_errors_when_no_total_and_no_items():
+    from correction.judge import parse_judge_output, JudgeParseError
+    import pytest
+    with pytest.raises(JudgeParseError):
+        parse_judge_output("some prose with no scores at all", max_points=20.0)

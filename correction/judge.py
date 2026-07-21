@@ -85,23 +85,34 @@ def parse_judge_output(raw: str, *, max_points: float) -> dict[str, Any]:
     if not raw or not raw.strip():
         raise JudgeParseError("empty judge output")
     text = raw.strip()
-    total_m = _TOTAL_LINE.search(text)
-    if not total_m:
-        raise JudgeParseError("missing TOTAL line")
-    total = float(total_m.group(1))
 
     items: dict[str, float] = {}
     for m in _R_LINE.finditer(text):
         items[f"R{m.group(1)}"] = float(m.group(2))
 
     traps_hit: list[str] = []
+    trap_penalty = 0.0
     for m in _TRAP_LINE.finditer(text):
         traps_hit.append(f"T{m.group(1)}")
+        trap_penalty += float(m.group(2))  # magnitude; sign applied below
 
     bonuses: list[str] = []
+    bonus_points = 0.0
     for m in _BONUS_LINE.finditer(text):
         # Avoid matching TOTAL-like noise; require B-prefix form
         bonuses.append(f"B{m.group(1)}")
+        bonus_points += float(m.group(2))
+
+    total_m = _TOTAL_LINE.search(text)
+    if total_m:
+        total = float(total_m.group(1))
+    elif items:
+        # Deterministic fallback: reconstruct the total from the item breakdown
+        # so a gradeable response is never discarded over a missing summary line
+        # (gpt-5.2 intermittently omits TOTAL). total = ΣR − ΣT + ΣB.
+        total = sum(items.values()) - trap_penalty + bonus_points
+    else:
+        raise JudgeParseError("missing TOTAL line and no scorable R items")
 
     if max_points <= 0:
         raise JudgeParseError(f"invalid max_points={max_points}")
