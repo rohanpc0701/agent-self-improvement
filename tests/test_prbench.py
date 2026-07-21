@@ -81,3 +81,30 @@ class TestAdapterFirewall:
         monkeypatch.setattr(pr, "load_manifest", lambda path=None: man)
         with pytest.raises(PermissionError):
             pr.rubric_for("h1", role="teacher")
+
+
+class TestMultiTurnAssembly:
+    def test_messages_preserve_conversation_and_inject_memory(self, monkeypatch):
+        import adapters.prbench as pr
+        from contracts.schemas import FewShotExample
+        turns = [
+            {"role": "user", "content": "first q"},
+            {"role": "assistant", "content": "prior answer"},
+            {"role": "user", "content": "final q"},
+        ]
+        mem = [FewShotExample(question="[FINANCE_PLAYBOOK] Corporate Finance",
+                              correct_output="Gate leverage before payout.",
+                              domain_id="Corporate Finance", source="tracelift")]
+        msgs = pr._student_messages(turns, mem)
+        assert msgs[0]["role"] == "system"
+        assert "Category memory" in msgs[0]["content"]      # memory injected once
+        assert "Gate leverage" in msgs[0]["content"]
+        assert msgs[1:] == turns                            # conversation preserved
+        assert msgs[-1]["content"] == "final q"             # student answers final turn
+
+    def test_no_memory_no_category_block(self):
+        import adapters.prbench as pr
+        turns = [{"role": "user", "content": "q"}]
+        msgs = pr._student_messages(turns, [])
+        assert "Category memory" not in msgs[0]["content"]
+        assert msgs[1:] == turns

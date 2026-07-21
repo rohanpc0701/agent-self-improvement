@@ -77,15 +77,61 @@ def score_answer(tid: str, answer: str, model: str | None = None) -> dict:
     return grade(t["question"], t["rubric"], answer, model=model)
 
 
-def generate_answer(question: str, config, memory: list[FewShotExample] | None = None):
-    """Student answer (reuses the generic finance student-generation path)."""
-    from adapters.finance import generate_answer as _fin_gen
+_SYSTEM = (
+    "You are an expert corporate finance professional. Answer the final user turn "
+    "with clear, rigorous, structured reasoning. Cite standards and show steps where "
+    "relevant. Produce the substantive answer only."
+)
 
-    cfg = config
-    if memory is not None:
-        cfg = config.model_copy(update={"few_shot_examples": memory})
-    # category is a single topic here; finance's builder injects same-topic memory.
-    return _fin_gen(question, cfg, _TOPIC)
+
+def _student_messages(turns: list[dict], memory: list[FewShotExample]) -> list[dict]:
+    """system (+ optional memory) then the conversation; student answers the last turn."""
+    from adapters.finance import select_category_memory, memory_kind_of
+
+    system = _SYSTEM
+    if memory:
+        sel = select_category_memory(memory, _TOPIC)
+        if sel:
+            blocks = ["Category memory (TraceLift):"]
+            for i, ex in enumerate(sel, 1):
+                blocks.append(f"Memory {i} [{memory_kind_of(ex) or 'other'}]:\n"
+                              f"{ex.question}\n{ex.correct_output}")
+            system = system + "\n\n" + "\n\n".join(blocks)
+    return [{"role": "system", "content": system}, *turns]
+
+
+def generate_answer(task_or_question, config, memory: list[FewShotExample] | None = None):
+    """Student answers the final turn of a task (single- or multi-turn).
+
+    Accepts a task dict (uses its `turns`) or a bare question string (single turn).
+    Returns (answer_text, stats).
+    """
+    from harness import agent
+    from harness.agent import _chat_with_retry
+
+    if isinstance(task_or_question, dict):
+        turns = task_or_question.get("turns") or [
+            {"role": "user", "content": task_or_question["question"]}
+        ]
+    else:
+        turns = [{"role": "user", "content": str(task_or_question)}]
+
+    mem = memory if memory is not None else list(config.few_shot_examples)
+    messages = _student_messages(turns, mem)
+    injected = sum(1 for m in messages if m["role"] == "system") - 1  # 0 or memory present
+    stats = {"examples_injected": len([m for m in mem if not m.domain_id or m.domain_id == _TOPIC][:4]),
+             "n_turns": sum(1 for t in turns if t["role"] == "user")}
+
+    client = agent._get_client()
+    max_tokens = int(os.environ.get("STUDENT_MAX_TOKENS", "6000"))
+    extra = {}
+    if os.environ.get("AGENT_ENABLE_THINKING", "").strip() not in ("1", "true", "yes"):
+        extra = {"reasoning": {"enabled": False}}  # clean content, no reasoning waste
+    resp = _chat_with_retry(client, model=config.model, messages=messages,
+                            temperature=0.0, max_tokens=max_tokens,
+                            **({"extra_body": extra} if extra else {}))
+    text = (resp.choices[0].message.content or "").strip()
+    return text, stats
 
 
 def teacher_repair(tid: str, student_answer: str, *, client=None, model: str | None = None,

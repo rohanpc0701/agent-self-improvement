@@ -44,8 +44,30 @@ def _criterion(raw: dict) -> dict | None:
     }
 
 
-def _turns(row: dict) -> int:
+def _n_prompts(row: dict) -> int:
     return sum(1 for k in row if k.startswith("prompt_") and row.get(k))
+
+
+def _conversation(row: dict) -> tuple[list[dict], str]:
+    """Build [{role,content}...] history + the final prompt the student answers.
+
+    single-turn → [user p0], final = p0
+    multi-turn  → [user p0, assistant r0, user p1, assistant r1, ..., user p_last]
+                  (prior assistant responses are the dataset's baseline model =
+                  fixed conversation context). final = last prompt.
+    """
+    turns: list[dict] = []
+    i = 0
+    final = ""
+    while (p := row.get(f"prompt_{i}")):
+        p = str(p).strip()
+        turns.append({"role": "user", "content": p})
+        final = p
+        r = row.get(f"response_{i}")
+        if r and str(r).strip():
+            turns.append({"role": "assistant", "content": str(r).strip()})
+        i += 1
+    return turns, final
 
 
 def main() -> None:
@@ -56,29 +78,29 @@ def main() -> None:
     for row in ds:
         if str(row.get("topic")) != "Corporate Finance":
             continue
-        if _turns(row) != 1:
-            continue  # single-turn only (our loop is single-shot)
         crits = [c for c in (_criterion(x) for x in (row["rubric"] or [])) if c]
-        if not crits or not (row.get("prompt_0") or "").strip():
+        turns, final = _conversation(row)
+        if not crits or not final:
             continue
         tasks.append({
             "id": str(row.get("task")),
             "topic": "Corporate Finance",
-            "question": row["prompt_0"].strip(),
+            "turns": turns,
+            "final_prompt": final,
+            # `question` kept for single-turn compatibility (= final prompt).
+            "question": final,
+            "n_turns": sum(1 for t in turns if t["role"] == "user"),
             "rubric": crits,
         })
     OUT.write_text(json.dumps(
-        {"_source": "ScaleAI/PRBench finance / topic=Corporate Finance / single-turn",
+        {"_source": "ScaleAI/PRBench finance / topic=Corporate Finance / single+multi-turn",
          "n": len(tasks), "items": tasks}, indent=1))
-    # summary
     from collections import Counter
     ncrit = [len(t["rubric"]) for t in tasks]
-    wclass = Counter(c["weight_class"] for t in tasks for c in t["rubric"])
-    print(f"wrote {len(tasks)} single-turn Corporate Finance tasks -> {OUT}")
+    turn_dist = Counter(t["n_turns"] for t in tasks)
+    print(f"wrote {len(tasks)} Corporate Finance tasks -> {OUT}")
+    print(f"turn distribution: {dict(sorted(turn_dist.items()))}")
     print(f"criteria/task: min={min(ncrit)} max={max(ncrit)} mean={sum(ncrit)/len(ncrit):.1f}")
-    print("weight classes:", dict(wclass))
-    print("max possible score (sum positive weights) sample:",
-          [round(sum(c['weight'] for c in t['rubric'] if c['weight'] > 0), 1) for t in tasks[:5]])
 
 
 if __name__ == "__main__":
