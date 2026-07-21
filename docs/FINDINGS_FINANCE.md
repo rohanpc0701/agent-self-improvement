@@ -216,3 +216,42 @@ Harness ready: `scripts/finance_eval.py` (A1/A4/A5, paired bootstrap).
 **LIVE A1/A4 numbers:** blocked on frozen TraceLift memory from §E.
 
 
+
+## G. TraceLift A1 vs A4 — first signal (CTO test, 2026-07-21)
+
+**Setup:** student `qwen/qwen3.6-27b` (reasoning disabled), teacher `z-ai/glm-5.2`,
+judge `openai/gpt-5.2`, OpenRouter. Ungated memory built from Credit+Trading
+train-stream repairs. Eval on the 7 Credit/Trading held-out questions (the only
+held-out where category-keyed memory injects). temp 0, single pass.
+
+### Memory-quality is the determinant
+
+| Memory | A1 mean | A4 mean | GAP | n |
+|---|---:|---:|---:|---:|
+| Boilerplate (extract + entity-scrub → generic stubs) | 30.5 | 24.4 | **−6.1** | 5 |
+| **Good (teacher-distilled, real ASC/IFRS reasoning)** | 25.2 | 30.9 | **+5.6** | 5 |
+
+Fixing distillation quality flipped hurt → help (a **+11.7** swing). Good-memory
+GAP clears the pre-registered +4-pt bar. Per-question (good memory): +17.9, +6.6,
++4.8, 0.0, −1.2 (3 of 5 improved).
+
+### The distillation fix
+
+Old path extracted checklist lines then entity-scrubbed to <24 chars → generic
+fallback template ("map facts → framework → gates"), carrying no usable reasoning.
+New path (`adapters/finance.py::_teacher_distill`, commit 4d81ef6): one teacher
+call distills a transferable playbook/trap directly, forbidden from any
+question-specific entity — leak-safe by construction, ~2000-char ASC/IFRS-grounded
+content vs 150-char stubs.
+
+### Honest caveats
+- **n=5** (2 questions lost to judge/rubric parse failures). No CI. Directional only.
+- **Baseline is noisy run-to-run:** fpb-00006 A1 = 44.0 (boilerplate run) vs 19.0
+  (good run) — same question, same student, temp 0. Student+judge nondeterminism
+  is large (10–25 pts on some questions), so +5.6 on n=5 sits partly inside noise.
+- Credit/Trading only; uplift gate bypassed (harness gating unreliable — see §E).
+
+**Read:** TraceLift helps qwen3.6-27b *when memory carries genuine transferable
+reasoning*; the earlier nulls (coding, GSM8K, boilerplate-finance) were
+memory-quality failures, not proof the mechanism can't work. Confirmation
+(more questions + repeats to beat noise) pending.
