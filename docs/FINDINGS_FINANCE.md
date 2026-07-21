@@ -144,3 +144,12 @@ Incomplete pairs (excluded from n=17): `fpb-00262` (bad rubric), `fpb-00072`
 ---
 
 *Updated 2026-07-20 after band-range judge recheck (3b).*
+
+## E. TraceLift memory build (Task C)
+
+*(LIVE numbers pending — saturation curve / admit stats filled after OpenRouter run.)*
+
+## F. Held-out A1 vs A4 (Task D)
+
+*(pending)*
+

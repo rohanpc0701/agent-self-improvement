@@ -67,7 +67,7 @@ breakdown, paired bootstrap CI. Numbers verbatim → `docs/FINDINGS_FINANCE.md`.
 - Student never sees rubrics (firewall test still passes).
 - Commit: `feat: finance memory retrieval + injection (category-keyed)`
 
-### Task C — TraceLift build loop (train-stream → uplift-gated frozen store)
+### Task C — TraceLift build loop (train-stream → uplift-gated frozen store) ✅ code
 
 **Files:** create `scripts/finance_tracelift.py`; tests.
 
@@ -104,7 +104,7 @@ Commit per task step.
 ## Execution log
 - Task A: DONE — teacher_repair + distill_memory_item + entity scrub; tests/test_finance_memory.py; pytest 38 passed
 - Task B: DONE — category-keyed select_category_memory (1+2+1), AGENT_USE_EXAMPLES gate, injection_stats.by_kind; firewall intact
-- Task C:
+- Task C: CODE DONE — scripts/finance_tracelift.py + tests; Prime JSONL archived; [LIVE] in progress
 - Task D:
 
 ## Questions

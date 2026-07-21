@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # FinancePro-Bench on OpenRouter (CTO-mandated platform).
 # Wires all three roles — student / teacher / judge — to OpenRouter, then
-# execs whatever finance command you pass. Same model slugs as Prime.
+# execs a finance script (default: finance_baselines.py).
 #
 # Usage:
-#   bash scripts/use_openrouter_finance.sh <python args to finance_baselines.py>
-# e.g.
 #   bash scripts/use_openrouter_finance.sh --mode headroom --resume
+#   bash scripts/use_openrouter_finance.sh scripts/finance_tracelift.py --phase all --resume
+#   bash scripts/use_openrouter_finance.sh scripts/finance_eval.py --arm a4 --resume
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -20,6 +20,7 @@ OR_BASE="https://openrouter.ai/api/v1"
 # Student (agent)
 export AGENT_BASE_URL="$OR_BASE"
 export AGENT_API_KEY="$OPENROUTER_API_KEY"
+export STUDENT_MODEL="${STUDENT_MODEL:-qwen/qwen3.6-27b}"
 
 # Teacher (CTO: GLM 5.2 — heavy reasoner, needs large token budget or content
 # comes back empty because it truncates mid-thinking).
@@ -36,9 +37,15 @@ export JUDGE_MODEL="${JUDGE_MODEL:-openai/gpt-5.2}"
 export AGENT_TIMEOUT_S="${AGENT_TIMEOUT_S:-120}"
 
 echo "== finance on OpenRouter =="
-echo "  student : ${STUDENT_MODEL:-qwen/qwen3.6-27b}"
+echo "  student : $STUDENT_MODEL"
 echo "  teacher : $TEACHER_MODEL"
 echo "  judge   : $JUDGE_MODEL"
 echo
 
-python3 scripts/finance_baselines.py "$@"
+if [[ "${1:-}" == *.py ]] || [[ "${1:-}" == scripts/* ]]; then
+  script="$1"
+  shift
+  python3 "$script" "$@"
+else
+  python3 scripts/finance_baselines.py "$@"
+fi
