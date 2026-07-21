@@ -308,19 +308,12 @@ def generate_answer(
         "max_tokens": tok,
         "max_retries": int(os.environ.get("AGENT_MAX_RETRIES", "5")),
     }
-    force_no_think = os.environ.get("AGENT_FORCE_NO_THINKING", "").strip() in (
-        "1",
-        "true",
-        "yes",
-    )
-    if force_no_think and os.environ.get("AGENT_ENABLE_THINKING", "").strip() not in (
-        "1",
-        "true",
-        "yes",
-    ):
-        kwargs["extra_body"] = {
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
+    # Disable reasoning by DEFAULT for thinking SKUs (qwen3.6-27b). On OpenRouter
+    # the unified `reasoning.enabled=false` param works where chat_template_kwargs
+    # does not (verified: 4.6s + content vs 26.5s + empty). Opt back in with
+    # AGENT_ENABLE_THINKING=1.
+    if os.environ.get("AGENT_ENABLE_THINKING", "").strip() not in ("1", "true", "yes"):
+        kwargs["extra_body"] = {"reasoning": {"enabled": False}}
 
     def _call(kw: dict):
         return _chat_with_retry(client, **kw)
@@ -649,9 +642,10 @@ def _skeletonize(repaired: str) -> str:
 
 
 def _playbook_from(repaired: str, category: str) -> str:
-    cleaned = scrub_leakage(repaired)
+    # Extract checklist structure BEFORE leakage scrub so entity wipes
+    # don't destroy numbering / step lines.
     lines = []
-    for raw in cleaned.splitlines():
+    for raw in repaired.splitlines():
         s = raw.strip()
         if not s:
             continue
@@ -660,26 +654,35 @@ def _playbook_from(repaired: str, category: str) -> str:
         ):
             lines.append(s)
     if not lines:
-        # Fallback: first ~120 tokens as category checklist seed.
-        lines = [_token_trim(cleaned, 120)]
-    body = f"Category playbook ({category}):\n" + "\n".join(f"- {x.lstrip('-•* ')}" for x in lines[:12])
-    return _token_trim(body, 300)
+        lines = [_token_trim(repaired, 120)]
+    bullets = []
+    for x in lines[:12]:
+        item = scrub_leakage(x.lstrip("-•* ").strip())
+        item = re.sub(r"(?:\[ENTITY\]\s*)+", "[ENTITY] ", item).strip()
+        if len(item) >= 8:
+            bullets.append(f"- {item}")
+    if not bullets:
+        bullets = [
+            f"- {category}: map facts → governing framework → ordered gates → "
+            f"quantitative conclusion; re-check aggregation and single-party rights."
+        ]
+    body = f"Category playbook ({category}):\n" + "\n".join(bullets)
+    return _token_trim(scrub_leakage(body), 300)
 
 
 def _trap_from(repaired: str, category: str) -> str:
-    cleaned = scrub_leakage(repaired)
     traps: list[str] = []
-    for raw in cleaned.splitlines():
+    for raw in repaired.splitlines():
         s = raw.strip()
         if re.search(r"(?i)\b(trap|avoid|do not|don't|never|pitfall|mistake)\b", s):
-            traps.append(s)
+            traps.append(scrub_leakage(s))
     if not traps:
         traps = [
             f"TRAP ({category}): verify framework gates before applying safe harbors "
             f"or shortcuts; re-check aggregation and single-party exercisability."
         ]
-    body = "\n".join(f"- {t}" for t in traps[:4])
-    return _token_trim(body, 300)
+    body = "\n".join(f"- {t}" for t in traps[:4] if t.strip())
+    return _token_trim(scrub_leakage(body), 300)
 
 
 def distill_memory_item(
