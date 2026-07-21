@@ -184,6 +184,7 @@ def collect_train_failures(
     max_new: int | None = None,
     time_budget_s: float | None = None,
     resume: bool = True,
+    target_failures: int | None = None,
 ) -> list[dict]:
     """Run/grade student on train ids; return failure rows (and log state)."""
     done = done_keys(state_path, "train_grade") if resume else set()
@@ -192,18 +193,39 @@ def collect_train_failures(
     for row in _load_jsonl(state_path):
         if row.get("kind") == "train_grade" and row.get("ok") and row.get("failure"):
             failures.append(row)
+    # Dedup recovered failures early so target_failures sees current count.
+    latest_f: dict[str, dict] = {r["key"]: r for r in failures}
+    failures = list(latest_f.values())
 
     cfg = AgentConfig(config_id="tracelift-student", model=student_model, few_shot_examples=[])
     os.environ.setdefault("AGENT_USE_EXAMPLES", "0")
     t0 = time.time()
     n_new = 0
     pending = [qid for qid in ids if qid not in done]
-    print(f"[tracelift/train] pending={len(pending)} done={len(done)}", flush=True)
+    print(
+        f"[tracelift/train] pending={len(pending)} done={len(done)} "
+        f"failures_so_far={len(failures)}"
+        + (f" target={target_failures}" if target_failures else ""),
+        flush=True,
+    )
+    if target_failures is not None and len(failures) >= target_failures:
+        print(
+            f"[tracelift/train] already have {len(failures)}≥{target_failures} failures; skip",
+            flush=True,
+        )
+        return failures
+
     for i, qid in enumerate(pending, 1):
         if max_new is not None and n_new >= max_new:
             break
         if time_budget_s is not None and (time.time() - t0) >= time_budget_s:
             print(f"[tracelift/train] time budget {time_budget_s}s; pause", flush=True)
+            break
+        if target_failures is not None and len(failures) >= target_failures:
+            print(
+                f"[tracelift/train] hit target_failures={target_failures}; pause",
+                flush=True,
+            )
             break
         p = get_problem(qid)
         try:
@@ -248,10 +270,12 @@ def collect_train_failures(
         _append_jsonl(state_path, row)
         if failed:
             failures.append(row)
+            # keep unique by key
+            failures = list({r["key"]: r for r in failures}.values())
         n_new += 1
         print(
             f"  [train {i}/{len(pending)}] {qid} norm={norm:.1f} "
-            f"{'FAIL' if failed else 'ok'}",
+            f"{'FAIL' if failed else 'ok'} (fails={len(failures)})",
             flush=True,
         )
     # Dedup failures by qid (latest wins).
@@ -531,6 +555,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-u", type=float, default=MIN_U_NORM, help="Min u in normalized pts")
     ap.add_argument("--max-new", type=int, default=None)
     ap.add_argument("--time-budget-s", type=float, default=None)
+    ap.add_argument(
+        "--target-failures",
+        type=int,
+        default=None,
+        help="Stop train phase once this many unique failures are collected",
+    )
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument(
@@ -553,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
             max_new=args.max_new,
             time_budget_s=args.time_budget_s,
             resume=args.resume,
+            target_failures=args.target_failures,
         )
         summary["n_failures"] = len(fails)
     else:
