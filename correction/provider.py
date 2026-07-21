@@ -29,6 +29,11 @@ def _default_model_for_base(base: str, model: str) -> str:
     return _DEFAULT_MINIMAX_TEACHER
 
 
+def _prime_team_headers() -> dict[str, str]:
+    team = (os.environ.get("PRIME_TEAM_ID") or os.environ.get("PRIME_TEAM") or "").strip()
+    return {"X-Prime-Team-ID": team} if team else {}
+
+
 def _openrouter_client(api_key: str, base_url: str = _OPENROUTER_BASE) -> OpenAI:
     headers = {}
     referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
@@ -37,6 +42,14 @@ def _openrouter_client(api_key: str, base_url: str = _OPENROUTER_BASE) -> OpenAI
         headers["HTTP-Referer"] = referer
     if title:
         headers["X-Title"] = title
+    kwargs: dict = {"api_key": api_key, "base_url": base_url}
+    if headers:
+        kwargs["default_headers"] = headers
+    return OpenAI(**kwargs)
+
+
+def _prime_client(api_key: str, base_url: str = _PRIME_BASE) -> OpenAI:
+    headers = _prime_team_headers()
     kwargs: dict = {"api_key": api_key, "base_url": base_url}
     if headers:
         kwargs["default_headers"] = headers
@@ -61,6 +74,10 @@ def teacher_client_and_model() -> tuple[OpenAI, str]:
             return _openrouter_client(explicit_key, explicit_base), _default_model_for_base(
                 explicit_base, model
             )
+        if "pinference" in explicit_base.lower() or "primeintellect" in explicit_base.lower():
+            return _prime_client(explicit_key, explicit_base), _default_model_for_base(
+                explicit_base, model
+            )
         return OpenAI(api_key=explicit_key, base_url=explicit_base), _default_model_for_base(
             explicit_base, model
         )
@@ -81,9 +98,7 @@ def teacher_client_and_model() -> tuple[OpenAI, str]:
     )
     prime_key = os.environ.get("PRIME_API_KEY") or os.environ.get("PRIME_INTELLECT_API_KEY")
     if use_prime and prime_key:
-        return OpenAI(api_key=prime_key, base_url=_PRIME_BASE), (
-            model or _DEFAULT_PRIME_TEACHER
-        )
+        return _prime_client(prime_key), (model or _DEFAULT_PRIME_TEACHER)
 
     key = os.environ.get("MINIMAX_API_KEY")
     if not key:

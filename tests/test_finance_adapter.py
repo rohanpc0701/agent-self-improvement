@@ -80,26 +80,55 @@ class TestRubricFirewall:
         assert p["rubric"] in prompt
         assert p["question"] in prompt
 
+    def test_teacher_rejects_mismatched_rubric_text(self, manifest, dataset):
+        train_id = manifest["train_ids"][0]
+        held_id = manifest["heldout_ids"][0]
+        with pytest.raises(PermissionError, match="does not match"):
+            build_teacher_prompt(
+                dataset[train_id]["question"],
+                qid=train_id,
+                rubric=dataset[held_id]["rubric"],
+                manifest=manifest,
+            )
+
     def test_examples_do_not_smuggle_rubric(self, dataset, manifest):
+        from adapters.finance import all_rubric_stems
+
         qid = manifest["heldout_ids"][0]
         p = dataset[qid]
-        # Malicious example that embeds rubric text — still student builder
-        # only includes example fields we pass; firewall test is about API.
+        stems = all_rubric_stems()
         cfg = AgentConfig(
             config_id="t",
             model="m",
             few_shot_examples=[
                 FewShotExample(
                     question="other q",
-                    correct_output="short answer",
+                    correct_output=p["rubric"][:200],
                     domain_id=p["category"],
                     source="teacher",
                 )
             ],
         )
-        prompt, stats = build_student_prompt(p["question"], cfg, p["category"])
-        assert stats["examples_injected"] == 1
-        assert p["rubric"] not in prompt
+        with pytest.raises(PermissionError, match="rubric firewall"):
+            build_student_prompt(
+                p["question"], cfg, p["category"], forbidden_rubric_stems=stems
+            )
+
+    def test_load_questions_defaults_to_train(self, manifest):
+        ad = FinanceAdapter()
+        qs = ad.load_questions()
+        assert len(qs) == 200
+        assert {q["id"] for q in qs} == set(manifest["train_ids"])
+
+    def test_rubric_for_acl(self, manifest):
+        from adapters.finance import rubric_for
+
+        held = manifest["heldout_ids"][0]
+        with pytest.raises(PermissionError):
+            rubric_for(held, role="student")
+        with pytest.raises(PermissionError):
+            rubric_for(held, role="teacher", manifest=manifest)
+        assert rubric_for(held, role="judge")
 
 
 class TestFeed:

@@ -119,6 +119,14 @@ def require_api_key() -> None:
     _api_key()  # raises MissingCredentialsError if missing
 
 
+def _prime_team_headers() -> dict[str, str]:
+    """Optional team billing header. Personal accounts leave PRIME_TEAM_ID unset."""
+    team = (os.environ.get("PRIME_TEAM_ID") or os.environ.get("PRIME_TEAM") or "").strip()
+    if team:
+        return {"X-Prime-Team-ID": team}
+    return {}
+
+
 def _client_kwargs() -> dict:
     kwargs: dict = {
         "api_key": _api_key(),
@@ -126,17 +134,19 @@ def _client_kwargs() -> dict:
         # Avoid indefinite hangs on flaky inference endpoints (probe/eval).
         "timeout": float(os.environ.get("AGENT_TIMEOUT_S", "90")),
     }
+    headers: dict[str, str] = {}
     if _is_openrouter():
         # Optional OpenRouter ranking headers (safe defaults).
-        headers = {}
         referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
         title = os.environ.get("OPENROUTER_APP_TITLE", "agent-self-improvement").strip()
         if referer:
             headers["HTTP-Referer"] = referer
         if title:
             headers["X-Title"] = title
-        if headers:
-            kwargs["default_headers"] = headers
+    if _is_prime():
+        headers.update(_prime_team_headers())
+    if headers:
+        kwargs["default_headers"] = headers
     return kwargs
 
 

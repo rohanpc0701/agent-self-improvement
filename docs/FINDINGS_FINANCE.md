@@ -1,0 +1,146 @@
+# FinancePro-Bench findings (RSI-Mem v2)
+
+Honest numbers only. Nulls and skips reported as such.
+
+## A. Dataset + splits (G0.1)
+
+- Source: `Sanscritic/finance-pro-bench` HF split `test` (400 rows), CC-BY-4.0.
+- Cache: `fixtures/finance_pro_bench.json` + `fixtures/FINANCE_LICENSE`.
+- Manifest: `fixtures/finance_manifest.json`, seed **42**.
+  - train-stream **200** / validation **80** / held-out **120**
+  - Disjoint; `--check` OK; no tiny categories (&lt;3).
+
+## B. Judge reliability (G0.2) — EXIT GATE
+
+**Protocol:** 40 stratified validation questions → one student answer each → judge twice in fresh contexts → Pearson *r* + MAD on normalized scores.
+
+| Setting | Value |
+|--------|--------|
+| Student (answers) | `qwen/qwen3-8b` (Prime early; OpenRouter for remainder after Prime timeouts) |
+| Judge | `openai/gpt-5.2` @ temp 0 on Prime |
+| Teacher (assert ≠ judge) | `minimax/minimax-m3` |
+| Sample | n=40 stratified from validation; **33** non-empty answers; **26** complete grade pairs |
+
+### Answer generation yield
+
+| Metric | Count |
+|--------|------:|
+| Planned | 40 |
+| Usable answers | 33 |
+| Failed / empty (timeouts, JSON errors) | 7 |
+
+### Test–retest (verbatim from `runs/judge_reliability_summary.json`)
+
+```json
+{
+  "n": 26,
+  "pearson_r": 0.8289546719998755,
+  "mad": 4.455873696256521,
+  "gate": "PASS_SINGLE",
+  "JUDGE_PASSES": 1,
+  "mean_pass1": 7.763384690026545,
+  "mean_pass2": 8.416652338484711
+}
+```
+
+### Gate decision
+
+| Criterion | Result |
+|-----------|--------|
+| MAD ≤ 5 | **Yes** (MAD ≈ **4.46**) → **single judge pass** (`JUDGE_PASSES=1`) |
+| 5 &lt; MAD ≤ 8 | n/a |
+| MAD &gt; 8 (K1) | **No** |
+
+**Verdict: GATE PASSED — proceed to G0.3/G0.4 with `JUDGE_PASSES=1`.**
+
+### Known judge / rubric issues (do not hide)
+
+- Some rubrics fail `Item R*(max N)` extraction (`fpb-00262`, `fpb-00208`) — those items excluded from pairs.
+- Occasional empty judge output / missing `TOTAL` after one repair-retry → pair incomplete, excluded from MAD *n*.
+- Hand-audit sample (15 Qs): `runs/judge_audit_sample.md` — **flag for Rohan**.
+
+### Student score context (not a baseline)
+
+Mean normalized score on this validation reliability set is ~8 (pass1/pass2). That is **not** the Phase 0 held-out baseline; it only characterizes this probe sample under a weak 8B student.
+
+## C. Headroom probe (G0.4)
+
+**Protocol:** 20 category-stratified VALIDATION ids (seed 42), bare student prompt
+(`AGENT_USE_EXAMPLES=0`), temp 0, `max_tokens=2048`, judge `openai/gpt-5.2` with
+`JUDGE_PASSES=1`. Endpoint: Prime. Thinking disabled for student gen via
+`chat_template_kwargs.enable_thinking=false` (required for `qwen/qwen3.6-27b`,
+which otherwise returned empty `content`).
+
+### Means (verbatim from `runs/finance_headroom_summary.json`)
+
+```json
+{
+  "qwen/qwen3-8b": 9.262307868713286,
+  "qwen/qwen3-30b-a3b-instruct-2507": 15.752503500053054,
+  "qwen/qwen3.6-27b": 26.305344197683876
+}
+```
+
+| Model | n graded / 20 | Mean normalized | In band 15–40? |
+|-------|--------------:|----------------:|:---------------|
+| `qwen/qwen3-8b` | 19 | **9.262** | No (&lt;15) |
+| `qwen/qwen3-30b-a3b-instruct-2507` | 19 | **15.753** | Yes |
+| `qwen/qwen3.6-27b` | 18 | **26.305** | Yes |
+
+**Ungradable / excluded:** `fpb-00262` (rubric lacks `Item R*(max N)` — all models);
+`fpb-00072` for 27b only (empty judge output after repair-retry). Answers generated
+for all 20 ids × 3 models.
+
+**Chosen student:** `qwen/qwen3.6-27b` — smallest model in band [15, 40]
+(SIZE_ORDER: 8b out of band; 27b &lt; 30b MoE among in-band). Fallback
+`qwen/qwen3.5-35b-a3b` not needed.
+
+### Reliability (band-range) — after student pick
+
+**Protocol:** same 20 headroom answers from `qwen/qwen3.6-27b` → grade a second
+time in a fresh context (pass2) → Pearson *r* + MAD on normalized pairs.
+
+#### Low-range (G0.2, for comparison)
+
+| Metric | Value |
+|--------|------:|
+| n pairs | 26 |
+| pearson_r | 0.829 |
+| MAD | 4.456 |
+| gate | PASS_SINGLE → `JUDGE_PASSES=1` |
+| Student answers | `qwen/qwen3-8b` (~mean 8) |
+
+#### Band-range (verbatim from `runs/finance_band_recheck_summary.json`)
+
+```json
+{
+  "label": "reliability (band-range)",
+  "student_model": "qwen/qwen3.6-27b",
+  "n": 17,
+  "pearson_r": 0.9617178576630094,
+  "mad": 4.188280804907782,
+  "gate": "PASS_SINGLE",
+  "JUDGE_PASSES": 1,
+  "mean_pass1": 25.685534723244224,
+  "mean_pass2": 26.76587003266326
+}
+```
+
+| Criterion | Result |
+|-----------|--------|
+| MAD ≤ 5 | **Yes** (MAD ≈ **4.19**) → **`JUDGE_PASSES=1` stands** |
+| 5 &lt; MAD ≤ 8 | n/a |
+| MAD &gt; 8 (STOP) | **No** |
+
+**Verdict: BAND-RANGE GATE PASSED — proceed to held-out baselines with `JUDGE_PASSES=1`.**
+
+Incomplete pairs (excluded from n=17): `fpb-00262` (bad rubric), `fpb-00072`
+(empty judge both passes), `fpb-00025` (pass2 missing TOTAL after repair).
+
+## D. Held-out baselines (G0.3)
+
+*(pending 3c)*
+
+---
+
+*Updated 2026-07-20 after band-range judge recheck (3b).*
