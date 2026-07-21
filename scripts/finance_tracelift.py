@@ -383,8 +383,23 @@ def gate_candidates(
             )
             break
 
-        u_acc = estimate_uplift(ad, cfg, cand, val_items, k=k)
-        u_norm = u_normalized(u_acc)
+        try:
+            u_acc = estimate_uplift(ad, cfg, cand, val_items, k=k)
+            u_norm = u_normalized(u_acc)
+        except Exception as exc:
+            print(f"  [uplift] {key[:60]} FAILED ({exc})", flush=True)
+            _append_jsonl(
+                state_path,
+                {
+                    "kind": "uplift",
+                    "key": key,
+                    "ok": False,
+                    "error": str(exc),
+                    "ts": time.time(),
+                },
+            )
+            n_new += 1
+            continue
         keep = u_norm > min_u_norm
         row = {
             "kind": "uplift",

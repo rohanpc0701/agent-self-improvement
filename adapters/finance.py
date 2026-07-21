@@ -266,13 +266,21 @@ def build_teacher_prompt(
     return "".join(parts)
 
 
+def _student_max_tokens(default: int = 8192) -> int:
+    raw = (os.environ.get("STUDENT_MAX_TOKENS") or str(default)).strip()
+    try:
+        return max(256, int(raw))
+    except ValueError:
+        return default
+
+
 def generate_answer(
     question: str,
     config: AgentConfig,
     category: str,
     *,
     temperature: float = 0.0,
-    max_tokens: int = 2048,
+    max_tokens: int | None = None,
     forbidden_rubric_stems: list[str] | None = None,
 ) -> tuple[str, dict]:
     prompt, stats = build_student_prompt(
@@ -284,9 +292,12 @@ def generate_answer(
     client = agent._get_client()
     from adapters.coding import _chat_with_retry
 
-    # Thinking SKUs (e.g. qwen3.6-27b) can return content=None and spend the
-    # entire max_tokens budget on reasoning. Default: disable thinking so bare
-    # student answers are comparable across candidates. Opt-in via env.
+    # Thinking SKUs (qwen3.6-27b): on OpenRouter, chat_template_kwargs
+    # enable_thinking=false is often ignored and still yields content=None
+    # while burning the token budget on reasoning. Prefer a large bare
+    # max_tokens first (STUDENT_MAX_TOKENS, default 8192). Opt into the
+    # Prime-era disable flag via AGENT_FORCE_NO_THINKING=1.
+    tok = _student_max_tokens() if max_tokens is None else max_tokens
     kwargs: dict = {
         "model": config.model,
         "messages": [
@@ -294,10 +305,19 @@ def generate_answer(
             {"role": "user", "content": prompt},
         ],
         "temperature": temperature,
-        "max_tokens": max_tokens,
+        "max_tokens": tok,
         "max_retries": int(os.environ.get("AGENT_MAX_RETRIES", "5")),
     }
-    if os.environ.get("AGENT_ENABLE_THINKING", "").strip() not in ("1", "true", "yes"):
+    force_no_think = os.environ.get("AGENT_FORCE_NO_THINKING", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if force_no_think and os.environ.get("AGENT_ENABLE_THINKING", "").strip() not in (
+        "1",
+        "true",
+        "yes",
+    ):
         kwargs["extra_body"] = {
             "chat_template_kwargs": {"enable_thinking": False},
         }
@@ -314,16 +334,15 @@ def generate_answer(
         )
         if reasoning:
             _log.warning(
-                "empty content from %s (reasoning_len=%d); retrying with max_tokens=8192",
+                "empty content from %s (reasoning_len=%d); retrying bare max_tokens bumps",
                 config.model,
                 len(str(reasoning)),
             )
-            # Thinking models often exhaust a 2048 budget on reasoning alone.
             for bump in (8192, 16384):
+                if bump <= tok:
+                    continue
                 kw2 = dict(kwargs)
                 kw2["max_tokens"] = bump
-                # Prefer bare request — chat_template_kwargs can leave some
-                # providers in reasoning-only mode with empty content.
                 kw2.pop("extra_body", None)
                 _log.warning(
                     "empty content from %s; retry max_tokens=%d no extra_body",
@@ -421,11 +440,13 @@ class FinanceAdapter:
             item.domain_id,
             forbidden_rubric_stems=stems,
         )
+        max_tok = int(os.environ.get("STUDENT_MAX_TOKENS", "8192"))
         answer, stats = generate_answer(
             item.question,
             config,
             category=item.domain_id,
             forbidden_rubric_stems=stems,
+            max_tokens=max_tok,
         )
 
         result = grade(
