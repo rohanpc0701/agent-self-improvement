@@ -85,7 +85,7 @@ def _fake_chat_response(text: str) -> SimpleNamespace:
 
 
 class TestRepairRetry:
-    """Missing TOTAL must trigger one repair-retry before hard failure."""
+    """Missing TOTAL / empty output must trigger one repair-retry before hard failure."""
 
     def test_one_pass_retries_then_succeeds(self):
         missing = "R1: 10 — cites ASC 810\nR2: 4 — partial\n"  # no TOTAL
@@ -112,6 +112,38 @@ class TestRepairRetry:
         assert "TOTAL" in calls[1]  # repair prompt emphasizes TOTAL
         assert out["total"] == 13.0
 
+    def test_one_pass_retries_empty_then_succeeds(self):
+        """Empty first completion must repair without an empty assistant turn."""
+        calls: list[list] = []
+
+        def fake_chat(client, *, model, messages, temperature, max_tokens):
+            calls.append(messages)
+            if len(calls) == 1:
+                return _fake_chat_response("")  # empty judge output
+            return _fake_chat_response(CLEAN)
+
+        with (
+            patch("correction.judge._judge_client", return_value=MagicMock()),
+            patch("correction.judge._chat_with_retry", side_effect=fake_chat),
+        ):
+            out = _one_pass(
+                "q?",
+                SAMPLE_RUBRIC,
+                "student answer",
+                model="openai/gpt-5.2",
+                max_points=18.0,
+            )
+        assert len(calls) == 2
+        # Repair is a fresh user nudge — no blank assistant turn.
+        roles = [m["role"] for m in calls[1]]
+        assert roles[-1] == "user"
+        assert "EMPTY" in calls[1][-1]["content"]
+        assert not any(
+            m.get("role") == "assistant" and not (m.get("content") or "").strip()
+            for m in calls[1]
+        )
+        assert out["total"] == 13.0
+
     def test_one_pass_retries_then_still_raises(self):
         missing = "R1: 1 — x\n"
 
@@ -130,6 +162,27 @@ class TestRepairRetry:
                 model="openai/gpt-5.2",
                 max_points=18.0,
             )
+
+    def test_grade_retries_empty_via_shared_path(self):
+        """grade() → _one_pass so uplift gate (FinanceAdapter.run_item) is covered."""
+        from correction.judge import grade
+
+        calls: list[dict] = []
+
+        def fake_chat(client, *, model, messages, temperature, max_tokens):
+            calls.append({"max_tokens": max_tokens})
+            text = "" if len(calls) == 1 else CLEAN
+            return _fake_chat_response(text)
+
+        with (
+            patch("correction.judge._judge_client", return_value=MagicMock()),
+            patch("correction.judge._chat_with_retry", side_effect=fake_chat),
+            patch("correction.judge._assert_judge_ne_teacher"),
+        ):
+            out = grade("q?", SAMPLE_RUBRIC, "student answer", model="openai/gpt-5.2")
+        assert len(calls) == 2
+        assert calls[1]["max_tokens"] == 3072  # empty → bumped budget
+        assert out["total"] == 13.0
 
     def test_grade_prompt_requires_total_line(self):
         from correction.judge import _build_judge_messages

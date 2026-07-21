@@ -187,6 +187,18 @@ def _build_judge_messages(question: str, rubric: str, answer: str) -> list[dict]
     ]
 
 
+def _message_text(resp: Any) -> str:
+    """Extract judge text; some SKUs leave content empty while reasoning is set."""
+    msg = resp.choices[0].message
+    text = (msg.content or "").strip()
+    if text:
+        return text
+    reasoning = getattr(msg, "reasoning", None)
+    if not reasoning and hasattr(msg, "model_extra") and msg.model_extra:
+        reasoning = msg.model_extra.get("reasoning")
+    return (str(reasoning) if reasoning else "").strip()
+
+
 def _one_pass(
     question: str,
     rubric: str,
@@ -203,33 +215,52 @@ def _one_pass(
         temperature=0.0,
         max_tokens=2048,
     )
-    raw = (resp.choices[0].message.content or "").strip()
+    raw = _message_text(resp)
     try:
         return parse_judge_output(raw, max_points=max_points)
-    except JudgeParseError:
-        # One repair-retry on missing TOTAL / bad lines, then hard error.
+    except JudgeParseError as first_err:
+        # One repair-retry on empty / missing TOTAL / bad lines, then hard error.
         # Live TraceLift marks the Q FAIL only after this second attempt fails.
-        repair = messages + [
-            {"role": "assistant", "content": raw},
-            {
-                "role": "user",
-                "content": (
-                    "PARSE ERROR: your previous output was unparseable "
-                    "(almost always: missing TOTAL line).\n"
-                    "Resend the FULL grade using ONLY this format. "
-                    "The final line MUST be `TOTAL: <number>` — no exceptions.\n\n"
-                    f"{_FORMAT_BLOCK}"
-                ),
-            },
-        ]
+        # Empty first responses must NOT append an empty assistant turn — that
+        # often yields another empty completion on gpt-5.2 / OpenRouter.
+        if not raw:
+            repair = messages + [
+                {
+                    "role": "user",
+                    "content": (
+                        "PARSE ERROR: your previous output was EMPTY "
+                        f"({first_err}).\n"
+                        "Respond again with the FULL grade now. "
+                        "Do not leave the message blank. "
+                        "The final line MUST be `TOTAL: <number>` — no exceptions.\n\n"
+                        f"{_FORMAT_BLOCK}"
+                    ),
+                },
+            ]
+            max_tok = 3072
+        else:
+            repair = messages + [
+                {"role": "assistant", "content": raw},
+                {
+                    "role": "user",
+                    "content": (
+                        "PARSE ERROR: your previous output was unparseable "
+                        f"({first_err}).\n"
+                        "Resend the FULL grade using ONLY this format. "
+                        "The final line MUST be `TOTAL: <number>` — no exceptions.\n\n"
+                        f"{_FORMAT_BLOCK}"
+                    ),
+                },
+            ]
+            max_tok = 2048
         resp2 = _chat_with_retry(
             client,
             model=model,
             messages=repair,
             temperature=0.0,
-            max_tokens=2048,
+            max_tokens=max_tok,
         )
-        raw2 = (resp2.choices[0].message.content or "").strip()
+        raw2 = _message_text(resp2)
         return parse_judge_output(raw2, max_points=max_points)
 
 

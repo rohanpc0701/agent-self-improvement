@@ -167,15 +167,27 @@ def load_memory(path: Path) -> list[FewShotExample]:
     return [FewShotExample(**x) for x in data.get("items", [])]
 
 
+# Transient judge parse failures — allow resume to re-gate instead of
+# permanently dropping candidates after a one-shot empty/TOTAL miss.
+_TRANSIENT_JUDGE_ERR = ("empty judge output", "missing total")
+
+
 def done_keys(state_path: Path, kind: str) -> set[str]:
     keys: set[str] = set()
     for row in _load_jsonl(state_path):
         if row.get("kind") != kind:
             continue
-        # Count both success and recorded failures so we don't retry forever
-        # on persistent judge/API errors.
-        if row.get("ok") or row.get("error"):
+        # Count successes and persistent errors so we don't retry forever
+        # on hard API failures. Empty/TOTAL judge misses stay retryable.
+        if row.get("ok"):
             keys.add(str(row.get("key")))
+            continue
+        err = str(row.get("error") or "").lower()
+        if not err:
+            continue
+        if any(t in err for t in _TRANSIENT_JUDGE_ERR):
+            continue
+        keys.add(str(row.get("key")))
     return keys
 
 

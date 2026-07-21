@@ -26,6 +26,8 @@ echo "=== fast-lane build $(date) ===" | tee -a "$LOG"
 for i in $(seq 1 40); do
   python3 scripts/finance_tracelift.py \
     --student-model qwen/qwen3.6-27b \
+    --state runs/finance_tracelift_state.jsonl \
+    --memory-out runs/finance_tracelift_memory.json \
     --max-new 10 --val-n 10 --k 1 \
     --resume --time-budget-s 480 >> "$LOG" 2>&1 || true
   if grep -qiE "FROZEN|build complete|stopping rule|memory frozen" "$LOG"; then
