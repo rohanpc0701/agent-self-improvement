@@ -35,14 +35,92 @@ from contracts.schemas import AgentConfig, FewShotExample
 _RETRYABLE_STATUS = (408, 429, 500, 502, 503, 504)
 
 
+class ProviderPinError(RuntimeError):
+    """OpenRouter served a request from a provider other than the pinned one.
+
+    Reproducibility depends on one provider/serving-config; if drift is detected
+    we abort loudly rather than continue with contaminated data.
+    """
+
+
+def _pinned_model() -> str:
+    # Which model slug must be provider-pinned (reproducibility target).
+    return os.environ.get("OPENROUTER_PIN_MODEL", "deepseek/deepseek-v4-pro").strip()
+
+
+def openrouter_provider_pin(model: str) -> dict:
+    """Return the OpenRouter `provider` routing object for a pinned model, else {}.
+
+    Pins to a SINGLE provider with no fallbacks so every request to the target
+    model is served identically. Config-driven (never hardcoded inline):
+      OPENROUTER_PROVIDER_ORDER  provider slug, e.g. "fireworks"  (default: fireworks)
+      OPENROUTER_PROVIDER_QUANT  optional precision lock, e.g. "fp8" (unset = don't pin quant)
+      OPENROUTER_PIN_MODEL       model slug to pin (default deepseek/deepseek-v4-pro)
+    Only applies on the OpenRouter base and only for the pinned model, so other
+    models (judge, teacher on other providers) are untouched.
+    """
+    if not _is_openrouter() or (model or "").strip() != _pinned_model():
+        return {}
+    order = os.environ.get("OPENROUTER_PROVIDER_ORDER", "fireworks").strip()
+    if not order:
+        return {}
+    provider: dict = {
+        "order": [order],
+        "allow_fallbacks": False,  # hard-fail instead of silently switching providers
+        "require_parameters": True,  # exclude providers that ignore our sampling params
+    }
+    quant = os.environ.get("OPENROUTER_PROVIDER_QUANT", "").strip()
+    if quant:
+        provider["quantizations"] = [quant]
+    return {"provider": provider}
+
+
+def _assert_provider(resp, model: str) -> None:
+    """After a pinned call, verify OpenRouter used the provider we asked for."""
+    pin = openrouter_provider_pin(model)
+    if not pin:
+        return
+    want = pin["provider"]["order"][0]
+    used = getattr(resp, "provider", None) or (
+        (getattr(resp, "model_extra", None) or {}).get("provider")
+    )
+    if used is None:
+        # OpenRouter normally returns `provider`; if absent, don't silently pass.
+        raise ProviderPinError(
+            f"pinned model {model!r} but response had no provider field to verify "
+            f"(expected {want!r})"
+        )
+    if str(used).strip().lower() != want.strip().lower():
+        raise ProviderPinError(
+            f"provider drift: pinned {want!r} but OpenRouter served {used!r} "
+            f"for {model!r} — aborting to avoid contaminated data"
+        )
+
+
 def _chat_with_retry(client, *, max_retries: int = 5, **kwargs):
     """Retry transient API failures (429/5xx/connection) with exponential backoff.
 
     A single throttled call must not kill a multi-hundred-call pipeline run.
+    For a provider-pinned model, injects the `provider` routing object into every
+    attempt (so retries reuse the SAME provider, never a fallback) and asserts the
+    served provider matches the pin.
     """
+    model = kwargs.get("model", "")
+    pin = openrouter_provider_pin(model)
+    if pin:
+        # Re-apply on every call so a caller that dropped extra_body (e.g. an
+        # empty-content retry) can never fall off the pinned provider.
+        extra = dict(kwargs.get("extra_body") or {})
+        extra.update(pin)
+        kwargs["extra_body"] = extra
+
     for attempt in range(max_retries + 1):
         try:
-            return client.chat.completions.create(**kwargs)
+            resp = client.chat.completions.create(**kwargs)
+            _assert_provider(resp, model)
+            return resp
+        except ProviderPinError:
+            raise  # drift is never retryable — abort loudly
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             retryable = status in _RETRYABLE_STATUS or exc.__class__.__name__ in (
@@ -54,7 +132,8 @@ def _chat_with_retry(client, *, max_retries: int = 5, **kwargs):
             delay = min(2.0 * 2**attempt, 60.0) + random.uniform(0, 1)
             print(
                 f"  [retry] {status or exc.__class__.__name__} — attempt "
-                f"{attempt + 1}/{max_retries}, sleeping {delay:.1f}s",
+                f"{attempt + 1}/{max_retries}, sleeping {delay:.1f}s "
+                f"(same provider, no fallback)",
                 flush=True,
             )
             time.sleep(delay)

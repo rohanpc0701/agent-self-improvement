@@ -39,6 +39,14 @@ export AGENT_TIMEOUT_S="${AGENT_TIMEOUT_S:-120}"
 export STUDENT_MAX_TOKENS="${STUDENT_MAX_TOKENS:-8192}"
 unset AGENT_FORCE_NO_THINKING 2>/dev/null || true
 
+# ── Provider pinning (reproducibility) ──────────────────────────────────────
+# Every request to OPENROUTER_PIN_MODEL is forced onto ONE provider with no
+# fallbacks, so serving config / quantization can't drift between runs.
+# Fill exact values from https://openrouter.ai/deepseek/deepseek-v4-pro/providers
+export OPENROUTER_PIN_MODEL="${OPENROUTER_PIN_MODEL:-deepseek/deepseek-v4-pro}"
+export OPENROUTER_PROVIDER_ORDER="${OPENROUTER_PROVIDER_ORDER:-fireworks}"   # provider slug (Fireworks)
+export OPENROUTER_PROVIDER_QUANT="${OPENROUTER_PROVIDER_QUANT:-}"            # PLACEHOLDER: e.g. fp8 — leave empty to not pin quant
+
 echo "== finance on OpenRouter =="
 echo "  student : $STUDENT_MODEL"
 echo "  teacher : $TEACHER_MODEL"
