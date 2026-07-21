@@ -223,7 +223,12 @@ def collect_train_failures(
             n_new += 1
             continue
         try:
-            answer, _stats = generate_answer(p["question"], cfg, category=p["category"])
+            # Thinking SKUs often need a large budget; start high to avoid
+            # empty-content → 8k/16k retry loops that blow the time budget.
+            max_tok = int(os.environ.get("STUDENT_MAX_TOKENS", "8192"))
+            answer, _stats = generate_answer(
+                p["question"], cfg, category=p["category"], max_tokens=max_tok
+            )
             result = grade(question=p["question"], rubric=p["rubric"], answer=answer)
             norm = float(result["normalized"])
         except Exception as exc:
