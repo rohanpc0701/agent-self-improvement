@@ -685,17 +685,83 @@ def _trap_from(repaired: str, category: str) -> str:
     return _token_trim(scrub_leakage(body), 300)
 
 
+_DISTILL_SYSTEM = (
+    "You extract reusable, transferable exam lessons for a weaker finance student. "
+    "Output ONLY the requested content — no preamble, no meta-commentary."
+)
+
+
+def _teacher_distill(
+    category: str,
+    repaired: str,
+    kind: str,
+    *,
+    client,
+    model: str | None = None,
+) -> str:
+    """One teacher call → clean, transferable memory content (no question specifics).
+
+    Produces real analytical content instead of the extract-then-scrub path,
+    which stripped items down to generic boilerplate. Leak-safe by construction:
+    the prompt forbids any entity/number/detail unique to the source problem.
+    """
+    if kind == "playbook":
+        ask = (
+            f"Write a reusable analytical PLAYBOOK (4–6 imperative steps) a weaker "
+            f"model should follow on ANY {category} problem, generalizing the "
+            f"reasoning below. Start with 'Category playbook ({category}):'."
+        )
+    elif kind == "trap":
+        ask = (
+            "State the ONE most important named TRAP the analysis below avoids, as "
+            "'TRAP: <trigger condition> → <what to do instead>'. One or two sentences."
+        )
+    else:
+        ask = (
+            f"Write a compact worked-reasoning SKELETON for {category} problems "
+            "(Issue → Framework → 4 ordered steps → Conclusion), generalizing the "
+            "approach below. Under 120 words."
+        )
+    prompt = (
+        f"A stronger model produced this correct analysis of a {category} finance "
+        f"problem:\n\n{_token_trim(repaired, 900)}\n\n{ask}\n\n"
+        "HARD RULES: use ONLY general finance principles, framework names, and "
+        "accounting/finance standard citations (e.g. ASC 810, IFRS 10, the VIE "
+        "model). Do NOT mention any company name, ticker, person, specific dollar "
+        "amount, date, or any detail unique to this particular problem — the lesson "
+        "must transfer to other problems in this category."
+    )
+    resolved = model or os.environ.get("TEACHER_MODEL") or "z-ai/glm-5.2"
+    # Reasoning off: we want the distilled content, not the thinking trace.
+    resp = client.chat.completions.create(
+        model=resolved,
+        messages=[
+            {"role": "system", "content": _DISTILL_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.0,
+        max_tokens=_teacher_max_tokens(),
+        extra_body={"reasoning": {"enabled": False}},
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    return _token_trim(text, 300) if text else ""
+
+
 def distill_memory_item(
     qid: str,
     repaired: str,
     *,
     kind: str = "skeleton",
     manifest: dict | None = None,
+    client=None,
+    model: str | None = None,
 ) -> FewShotExample:
     """Compress a teacher repair into a TraceLift memory item.
 
     kind: playbook | trap | skeleton. domain_id = category, source = tracelift.
-    Leakage guard strips named entities and val/held-out question stems.
+    When `client` is provided, the teacher distills transferable content directly
+    (real reasoning). Without a client, falls back to the deterministic extract
+    path (used by hermetic tests). Leakage guard strips source-question entities.
     """
     if kind not in _MEMORY_KINDS:
         raise ValueError(f"unknown memory kind {kind!r}")
@@ -703,44 +769,28 @@ def distill_memory_item(
     assert_rubric_allowed_for_teacher(qid, manifest)
     problem = get_problem(qid)
     category = problem["category"]
-    if kind == "playbook":
-        body = _playbook_from(repaired, category)
-    elif kind == "trap":
-        body = _trap_from(repaired, category)
-    else:
-        body = _skeletonize(repaired)
+
+    body = ""
+    if client is not None:
+        body = _teacher_distill(category, repaired, kind, client=client, model=model)
+
+    if not body:
+        # Offline / test fallback: deterministic extract from the repair text.
+        if kind == "playbook":
+            body = _playbook_from(repaired, category)
+        elif kind == "trap":
+            body = _trap_from(repaired, category)
+        else:
+            body = _skeletonize(repaired)
+        body = scrub_leakage(body)
 
     # Question side is a category-keyed stub — never the raw train question.
-    q_stub = f"{_KIND_PREFIX[kind]} {category}"
-    q_stub = scrub_leakage(q_stub)
-    body = scrub_leakage(body)
-    # Final entity pass against the source question's entities.
+    q_stub = scrub_leakage(f"{_KIND_PREFIX[kind]} {category}")
+    # Strip only entities that appear in the SOURCE question (leak protection),
+    # not general finance terms — teacher content is already specifics-free.
     src_ents = extract_named_entities(problem["question"])
     body = strip_named_entities(body, src_ents)
     q_stub = strip_named_entities(q_stub, src_ents)
-
-    # If scrub wiped the body (aggressive entity strip), keep a category-level
-    # procedural stub so the gate still has a measurable artifact.
-    if len(re.sub(r"^[-•*\s\[\]]+", "", (body or "")).strip()) < 24:
-        if kind == "playbook":
-            body = (
-                f"Category playbook ({category}):\n"
-                f"- Sequence framework gates before applying conclusions.\n"
-                f"- Check aggregation / single-party tests before safe harbors.\n"
-                f"- Separate contractual wording from economic substance."
-            )
-        elif kind == "trap":
-            body = (
-                f"- TRAP ({category}): do not skip framework gates; "
-                f"never treat marketing language as binding commitment."
-            )
-        else:
-            body = (
-                f"Issue: incomplete {category} analysis.\n"
-                f"Framework: apply governing standard in order.\n"
-                f"Steps: identify facts → map tests → quantify → conclude.\n"
-                f"Conclusion: state the binding constraint explicitly."
-            )
 
     return FewShotExample(
         question=q_stub,

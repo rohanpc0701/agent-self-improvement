@@ -333,8 +333,13 @@ def build_candidates_from_failures(
                 print(f"[tracelift/cand] time budget; pause", flush=True)
                 return candidates
             try:
-                repaired = teacher_repair(qid, student_answer)
-                ex = distill_memory_item(qid, repaired, kind=kind)
+                from correction.provider import teacher_client_and_model
+
+                t_client, _t_model = teacher_client_and_model()
+                repaired = teacher_repair(qid, student_answer, client=t_client)
+                ex = distill_memory_item(
+                    qid, repaired, kind=kind, client=t_client
+                )
             except Exception as exc:
                 print(f"  [cand] {key} FAILED ({exc})", flush=True)
                 continue
