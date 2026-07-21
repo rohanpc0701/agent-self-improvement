@@ -32,6 +32,13 @@ _SYSTEM = (
     "Do not invent rubric scores — produce the substantive answer only."
 )
 
+_MEMORY_KINDS = ("playbook", "trap", "skeleton")
+_KIND_PREFIX = {
+    "playbook": "[FINANCE_PLAYBOOK]",
+    "trap": "[FINANCE_TRAP]",
+    "skeleton": "[FINANCE_SKELETON]",
+}
+
 _BY_ID: dict[str, dict] | None = None
 _MANIFEST_CACHE: dict | None = None
 
@@ -103,6 +110,50 @@ def assert_rubric_allowed_for_teacher(qid: str, manifest: dict | None = None) ->
         )
 
 
+def memory_kind_of(ex: FewShotExample) -> str | None:
+    """Return playbook|trap|skeleton from question prefix, else None."""
+    q = (ex.question or "").lstrip()
+    for kind, prefix in _KIND_PREFIX.items():
+        if q.startswith(prefix):
+            return kind
+    return None
+
+
+def select_category_memory(
+    examples: list[FewShotExample],
+    category: str,
+    *,
+    max_playbooks: int = 1,
+    max_traps: int = 2,
+    max_skeletons: int = 1,
+) -> list[FewShotExample]:
+    """Category-keyed retrieval with TraceLift compaction caps (≤4 items)."""
+    same = [e for e in examples if not e.domain_id or e.domain_id == category]
+    playbooks: list[FewShotExample] = []
+    traps: list[FewShotExample] = []
+    skeletons: list[FewShotExample] = []
+    other: list[FewShotExample] = []
+    for e in same:
+        k = memory_kind_of(e)
+        if k == "playbook":
+            playbooks.append(e)
+        elif k == "trap":
+            traps.append(e)
+        elif k == "skeleton":
+            skeletons.append(e)
+        else:
+            other.append(e)
+    picked: list[FewShotExample] = []
+    picked.extend(playbooks[:max_playbooks])
+    picked.extend(traps[:max_traps])
+    picked.extend(skeletons[:max_skeletons])
+    # Fill remaining slots (up to 4) with untyped same-category exemplars if needed.
+    remaining = 4 - len(picked)
+    if remaining > 0:
+        picked.extend(other[:remaining])
+    return picked[:4]
+
+
 def build_student_prompt(
     question: str,
     config: AgentConfig,
@@ -110,34 +161,45 @@ def build_student_prompt(
     *,
     forbidden_rubric_stems: list[str] | None = None,
 ) -> tuple[str, dict]:
-    """Assemble student prompt from question + memory only — never rubric."""
+    """Assemble student prompt from question + memory only — never rubric.
+
+    Memory injection (AGENT_USE_EXAMPLES): ≤4 items by category match —
+    1 playbook + ≤2 traps + ≤1 skeleton (RA-RFT adapted; no embeddings).
+    """
     stats = {
         "examples_available": len(config.few_shot_examples),
         "examples_injected": 0,
         "example_ids": [],
         "rules_injected": 0,
+        "by_kind": {"playbook": 0, "trap": 0, "skeleton": 0, "other": 0},
     }
     parts: list[str] = []
     stems = forbidden_rubric_stems or []
     if os.environ.get("AGENT_USE_EXAMPLES", "1") != "0":
-        same = [
-            e
-            for e in config.few_shot_examples
-            if not e.domain_id or e.domain_id == category
-        ][:3]
-        if same:
-            lines = ["Worked exemplars:"]
-            for i, ex in enumerate(same):
+        selected = select_category_memory(config.few_shot_examples, category)
+        if selected:
+            lines = ["Category memory (TraceLift):"]
+            for i, ex in enumerate(selected):
                 blob = f"{ex.question}\n{ex.correct_output}"
                 _assert_no_rubric_smuggle(blob, stems, where="few-shot example")
-                lines.append(f"Example {i + 1}:\nQ: {ex.question}\nA: {ex.correct_output}")
-                stats["example_ids"].append(getattr(ex, "source", f"ex{i}"))
-            stats["examples_injected"] = len(same)
+                kind = memory_kind_of(ex) or "other"
+                stats["by_kind"][kind] = stats["by_kind"].get(kind, 0) + 1
+                lines.append(
+                    f"Memory {i + 1} [{kind}]:\n{ex.question}\n{ex.correct_output}"
+                )
+                stats["example_ids"].append(
+                    f"{kind}:{getattr(ex, 'source', 'ex')}"
+                )
+            stats["examples_injected"] = len(selected)
             parts.append("\n\n".join(lines) + "\n\n")
     parts.append(question)
     prompt = "".join(parts)
     _assert_no_rubric_smuggle(prompt, stems, where="student prompt")
     return prompt, stats
+
+
+# Alias used in the TraceLift work order.
+build_user_prompt = build_student_prompt
 
 
 def _assert_no_rubric_smuggle(
@@ -398,12 +460,6 @@ class FinanceAdapter:
 
 # ── TraceLift Task A: teacher repair + memory distillation ───────────────────
 
-_MEMORY_KINDS = ("playbook", "trap", "skeleton")
-_KIND_PREFIX = {
-    "playbook": "[FINANCE_PLAYBOOK]",
-    "trap": "[FINANCE_TRAP]",
-    "skeleton": "[FINANCE_SKELETON]",
-}
 _ENTITY_RE = re.compile(
     r"\b(?:[A-Z][a-zA-Z0-9&'’-]+(?:\s+(?:of|and|the|for|de|du|la|le)){0,1}\s+)"
     r"{1,}[A-Z][a-zA-Z0-9&'’-]+"

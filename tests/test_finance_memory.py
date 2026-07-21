@@ -13,7 +13,7 @@ from adapters.finance import (
     strip_named_entities,
     teacher_repair,
 )
-from contracts.schemas import FewShotExample
+from contracts.schemas import AgentConfig, FewShotExample
 
 
 @pytest.fixture(scope="module")
@@ -149,3 +149,81 @@ class TestDistillMemoryItem:
         for e in ents[:5]:
             if len(e) >= 8:
                 assert e not in blob, f"entity leaked: {e!r}"
+
+
+class TestMemoryInjection:
+    def _ex(self, kind: str, category: str, body: str) -> FewShotExample:
+        from adapters.finance import _KIND_PREFIX
+
+        return FewShotExample(
+            question=f"{_KIND_PREFIX[kind]} {category}",
+            correct_output=body,
+            domain_id=category,
+            source="tracelift",
+        )
+
+    def test_injects_caps_by_kind_and_category(self, monkeypatch):
+        from adapters.finance import build_student_prompt, build_user_prompt
+
+        monkeypatch.delenv("AGENT_USE_EXAMPLES", raising=False)
+        cat = "Accounting"
+        other = "Banking"
+        examples = [
+            self._ex("playbook", cat, "pb1"),
+            self._ex("playbook", cat, "pb2-extra"),
+            self._ex("trap", cat, "t1"),
+            self._ex("trap", cat, "t2"),
+            self._ex("trap", cat, "t3-extra"),
+            self._ex("skeleton", cat, "sk1"),
+            self._ex("skeleton", cat, "sk2-extra"),
+            self._ex("playbook", other, "wrong-cat"),
+        ]
+        cfg = AgentConfig(config_id="t", model="m", few_shot_examples=examples)
+        prompt, stats = build_student_prompt("Q?", cfg, cat)
+        assert stats["examples_injected"] == 4
+        assert stats["by_kind"]["playbook"] == 1
+        assert stats["by_kind"]["trap"] == 2
+        assert stats["by_kind"]["skeleton"] == 1
+        assert "pb1" in prompt and "pb2-extra" not in prompt
+        assert "t3-extra" not in prompt
+        assert "sk2-extra" not in prompt
+        assert "wrong-cat" not in prompt
+        # Alias
+        p2, s2 = build_user_prompt("Q?", cfg, cat)
+        assert p2 == prompt and s2["examples_injected"] == 4
+
+    def test_agent_use_examples_gate(self, monkeypatch):
+        from adapters.finance import build_student_prompt
+
+        monkeypatch.setenv("AGENT_USE_EXAMPLES", "0")
+        cfg = AgentConfig(
+            config_id="t",
+            model="m",
+            few_shot_examples=[self._ex("playbook", "Accounting", "secret")],
+        )
+        prompt, stats = build_student_prompt("Q?", cfg, "Accounting")
+        assert stats["examples_injected"] == 0
+        assert "secret" not in prompt
+
+    def test_firewall_still_blocks_rubric_in_memory(self, dataset, manifest):
+        from adapters.finance import all_rubric_stems, build_student_prompt
+
+        qid = manifest["heldout_ids"][0]
+        p = dataset[qid]
+        stems = all_rubric_stems()
+        cfg = AgentConfig(
+            config_id="t",
+            model="m",
+            few_shot_examples=[
+                FewShotExample(
+                    question="[FINANCE_PLAYBOOK] Accounting",
+                    correct_output=p["rubric"][:200],
+                    domain_id="Accounting",
+                    source="tracelift",
+                )
+            ],
+        )
+        with pytest.raises(PermissionError, match="rubric firewall"):
+            build_student_prompt(
+                "Q?", cfg, "Accounting", forbidden_rubric_stems=stems
+            )

@@ -57,7 +57,7 @@ breakdown, paired bootstrap CI. Numbers verbatim → `docs/FINDINGS_FINANCE.md`.
   asserts no held-out/validation question text leaks in.
 - Commit: `feat: finance teacher-repair + memory-item distillation`
 
-### Task B — Memory injection into the student prompt
+### Task B — Memory injection into the student prompt ✅
 
 **Files:** extend `adapters/finance.py` (`build_user_prompt`), tests.
 
@@ -103,7 +103,7 @@ Commit per task step.
 
 ## Execution log
 - Task A: DONE — teacher_repair + distill_memory_item + entity scrub; tests/test_finance_memory.py; pytest 38 passed
-- Task B:
+- Task B: DONE — category-keyed select_category_memory (1+2+1), AGENT_USE_EXAMPLES gate, injection_stats.by_kind; firewall intact
 - Task C:
 - Task D:
 
