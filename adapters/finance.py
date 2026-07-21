@@ -10,12 +10,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
 
 from contracts.schemas import AgentConfig, Difficulty, FewShotExample, TelemetryRecord
 from correction.learner import FailingCase
+from correction.provider import teacher_client_and_model
 from harness import agent
 from harness.feed import FeedItem
 
@@ -389,6 +391,257 @@ class FinanceAdapter:
         failing_cases: list[FailingCase],
         anchor_cases: list[FailingCase],
     ) -> list[FewShotExample]:
-        """Phase 0 stub — memory write path arrives in Phase 2."""
+        """Phase 0 stub — TraceLift write path uses teacher_repair / distill."""
         del failing_cases, anchor_cases
         return []
+
+
+# ── TraceLift Task A: teacher repair + memory distillation ───────────────────
+
+_MEMORY_KINDS = ("playbook", "trap", "skeleton")
+_KIND_PREFIX = {
+    "playbook": "[FINANCE_PLAYBOOK]",
+    "trap": "[FINANCE_TRAP]",
+    "skeleton": "[FINANCE_SKELETON]",
+}
+_ENTITY_RE = re.compile(
+    r"\b(?:[A-Z][a-zA-Z0-9&'’-]+(?:\s+(?:of|and|the|for|de|du|la|le)){0,1}\s+)"
+    r"{1,}[A-Z][a-zA-Z0-9&'’-]+"
+    r"(?:\s+(?:Inc|Inc\.|LLC|Ltd|Ltd\.|Corp|Corp\.|Co|Co\.|PLC|LP|LLP))?\b"
+)
+_TICKER_RE = re.compile(r"\b[A-Z]{2,5}\b")
+_COMMON_CAPS = {
+    "THE", "AND", "FOR", "WITH", "FROM", "THAT", "THIS", "WHEN", "WHERE",
+    "ASC", "GAAP", "IFRS", "SEC", "FASB", "US", "USA", "CEO", "CFO", "EPS",
+    "EBITDA", "ROE", "ROA", "NPV", "IRR", "WACC", "VAT", "FX", "USD", "EUR",
+    "ITEM", "TOTAL", "NOTE", "PART", "SECTION", "TABLE", "EXHIBIT", "APPENDIX",
+}
+
+
+def extract_named_entities(text: str) -> list[str]:
+    """Heuristic named-entity harvest for leakage scrubbing (not NER-quality)."""
+    found: list[str] = []
+    for m in _ENTITY_RE.finditer(text):
+        s = m.group(0).strip()
+        if len(s) >= 6:
+            found.append(s)
+    for m in _TICKER_RE.finditer(text):
+        s = m.group(0)
+        if s not in _COMMON_CAPS and len(s) >= 3:
+            found.append(s)
+    # Stable unique, longest-first so strip replaces rich phrases first.
+    uniq = sorted(set(found), key=lambda x: (-len(x), x))
+    return uniq
+
+
+def strip_named_entities(text: str, entities: list[str] | None = None) -> str:
+    """Replace named entities with [ENTITY] placeholders."""
+    ents = entities if entities is not None else extract_named_entities(text)
+    out = text
+    for e in ents:
+        if e and e in out:
+            out = out.replace(e, "[ENTITY]")
+    # Collapse repeated placeholders.
+    out = re.sub(r"(?:\[ENTITY\]\s*){2,}", "[ENTITY] ", out)
+    return out
+
+
+def _forbidden_question_stems(
+    *, splits: tuple[str, ...] = ("validation", "heldout"), n: int = 80
+) -> list[str]:
+    m = load_manifest()
+    ids: list[str] = []
+    if "validation" in splits:
+        ids.extend(m["validation_ids"])
+    if "heldout" in splits:
+        ids.extend(m["heldout_ids"])
+    stems: list[str] = []
+    for qid in ids:
+        q = get_problem(qid)["question"].strip()
+        stem = q[:n]
+        if len(stem) >= 40:
+            stems.append(stem)
+    return stems
+
+
+def scrub_leakage(text: str) -> str:
+    """Strip entities + remove any long stems that match val/held-out questions."""
+    cleaned = strip_named_entities(text)
+    for stem in _forbidden_question_stems():
+        if stem and stem in cleaned:
+            cleaned = cleaned.replace(stem, "[REDACTED_SPLIT_TEXT]")
+    return cleaned
+
+
+def _teacher_max_tokens() -> int:
+    raw = (os.environ.get("TEACHER_MAX_TOKENS") or "4000").strip()
+    try:
+        return max(256, int(raw))
+    except ValueError:
+        return 4000
+
+
+_TEACHER_SYSTEM = (
+    "You are an expert finance teacher. Produce a corrected expert answer "
+    "that would score well against the official rubric. Use the rubric as a "
+    "grading guide for completeness — do not paste rubric item IDs into the "
+    "answer. Return only the corrected answer."
+)
+
+
+def teacher_repair(
+    qid: str,
+    student_answer: str,
+    *,
+    client=None,
+    model: str | None = None,
+    manifest: dict | None = None,
+) -> str:
+    """GLM teacher repair on a TRAIN-STREAM failure. Rubric ACL enforced."""
+    problem = get_problem(qid)
+    rubric = rubric_for(qid, role="teacher", manifest=manifest)
+    prompt = build_teacher_prompt(
+        problem["question"],
+        qid=qid,
+        rubric=rubric,
+        broken=student_answer,
+        manifest=manifest,
+    )
+    if client is None:
+        client, resolved = teacher_client_and_model()
+    else:
+        resolved = model or os.environ.get("TEACHER_MODEL") or "z-ai/glm-5.2"
+    max_tokens = _teacher_max_tokens()
+    resp = client.chat.completions.create(
+        model=resolved if model is None else model,
+        messages=[
+            {"role": "system", "content": _TEACHER_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    if not text:
+        # Thinking models: bump budget once (same pattern as student generate).
+        resp2 = client.chat.completions.create(
+            model=resolved if model is None else model,
+            messages=[
+                {"role": "system", "content": _TEACHER_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_tokens=max(max_tokens, 8192),
+        )
+        text = (resp2.choices[0].message.content or "").strip()
+    return text
+
+
+def _token_trim(text: str, max_tokens: int = 300) -> str:
+    toks = text.split()
+    if len(toks) <= max_tokens:
+        return text.strip()
+    return " ".join(toks[:max_tokens]).strip()
+
+
+def _skeletonize(repaired: str) -> str:
+    """Compress a repair into issue → framework → steps → conclusion (≤300 tok)."""
+    cleaned = scrub_leakage(repaired)
+    # Prefer explicit section headers if present; else take lead paragraphs.
+    sections: list[str] = []
+    for label in ("Issue", "Framework", "Steps", "Conclusion"):
+        m = re.search(
+            rf"(?im)^\s*{label}\s*:\s*(.+?)(?=^\s*(?:Issue|Framework|Steps|Conclusion)\s*:|\Z)",
+            cleaned,
+            flags=re.DOTALL,
+        )
+        if m:
+            sections.append(f"{label}: {m.group(1).strip()}")
+    if sections:
+        body = "\n".join(sections)
+    else:
+        # Lead + mid + tail snippets without raw dump.
+        paras = [p.strip() for p in re.split(r"\n\s*\n", cleaned) if p.strip()]
+        picked = paras[:2]
+        if len(paras) > 3:
+            picked.append(paras[len(paras) // 2])
+        if len(paras) > 1:
+            picked.append(paras[-1])
+        body = "\n".join(picked) if picked else cleaned
+    return _token_trim(body, 300)
+
+
+def _playbook_from(repaired: str, category: str) -> str:
+    cleaned = scrub_leakage(repaired)
+    lines = []
+    for raw in cleaned.splitlines():
+        s = raw.strip()
+        if not s:
+            continue
+        if re.match(r"^(\d+[\).]|[-*•]|\(\d+\))", s) or s.lower().startswith(
+            ("step", "check", "gate", "first", "then", "finally", "always", "never")
+        ):
+            lines.append(s)
+    if not lines:
+        # Fallback: first ~120 tokens as category checklist seed.
+        lines = [_token_trim(cleaned, 120)]
+    body = f"Category playbook ({category}):\n" + "\n".join(f"- {x.lstrip('-•* ')}" for x in lines[:12])
+    return _token_trim(body, 300)
+
+
+def _trap_from(repaired: str, category: str) -> str:
+    cleaned = scrub_leakage(repaired)
+    traps: list[str] = []
+    for raw in cleaned.splitlines():
+        s = raw.strip()
+        if re.search(r"(?i)\b(trap|avoid|do not|don't|never|pitfall|mistake)\b", s):
+            traps.append(s)
+    if not traps:
+        traps = [
+            f"TRAP ({category}): verify framework gates before applying safe harbors "
+            f"or shortcuts; re-check aggregation and single-party exercisability."
+        ]
+    body = "\n".join(f"- {t}" for t in traps[:4])
+    return _token_trim(body, 300)
+
+
+def distill_memory_item(
+    qid: str,
+    repaired: str,
+    *,
+    kind: str = "skeleton",
+    manifest: dict | None = None,
+) -> FewShotExample:
+    """Compress a teacher repair into a TraceLift memory item.
+
+    kind: playbook | trap | skeleton. domain_id = category, source = tracelift.
+    Leakage guard strips named entities and val/held-out question stems.
+    """
+    if kind not in _MEMORY_KINDS:
+        raise ValueError(f"unknown memory kind {kind!r}")
+    # Distillation only from train-stream repairs (firewall).
+    assert_rubric_allowed_for_teacher(qid, manifest)
+    problem = get_problem(qid)
+    category = problem["category"]
+    if kind == "playbook":
+        body = _playbook_from(repaired, category)
+    elif kind == "trap":
+        body = _trap_from(repaired, category)
+    else:
+        body = _skeletonize(repaired)
+
+    # Question side is a category-keyed stub — never the raw train question.
+    q_stub = f"{_KIND_PREFIX[kind]} {category}"
+    q_stub = scrub_leakage(q_stub)
+    body = scrub_leakage(body)
+    # Final entity pass against the source question's entities.
+    src_ents = extract_named_entities(problem["question"])
+    body = strip_named_entities(body, src_ents)
+    q_stub = strip_named_entities(q_stub, src_ents)
+
+    return FewShotExample(
+        question=q_stub,
+        correct_output=_token_trim(body, 300),
+        domain_id=category,
+        source="tracelift",
+    )

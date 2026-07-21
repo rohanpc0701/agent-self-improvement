@@ -1,8 +1,30 @@
-"""Paired bootstrap for held-out accuracy deltas (RSI-Mem G0.2)."""
+"""Bootstrap helpers for held-out scores / deltas (RSI-Mem)."""
 from __future__ import annotations
 
 import random
 from typing import Sequence
+
+
+def mean_bootstrap(
+    xs: Sequence[float],
+    n_boot: int = 10_000,
+    seed: int = 0,
+) -> dict[str, float]:
+    """Resample scores with replacement; percentile CI for the mean."""
+    if not xs:
+        raise ValueError("empty vector")
+    vals = list(xs)
+    n = len(vals)
+    mean = sum(vals) / n
+    rng = random.Random(seed)
+    boots: list[float] = []
+    for _ in range(n_boot):
+        idxs = [rng.randrange(n) for _ in range(n)]
+        boots.append(sum(vals[i] for i in idxs) / n)
+    boots.sort()
+    lo = boots[int(0.025 * n_boot)]
+    hi = boots[min(n_boot - 1, int(0.975 * n_boot))]
+    return {"mean": mean, "ci_low": lo, "ci_high": hi, "n": float(n)}
 
 
 def paired_bootstrap(

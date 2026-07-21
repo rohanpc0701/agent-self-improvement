@@ -43,7 +43,7 @@ breakdown, paired bootstrap CI. Numbers verbatim → `docs/FINDINGS_FINANCE.md`.
 
 ---
 
-### Task A — Finance teacher-repair → candidate memory items
+### Task A — Finance teacher-repair → candidate memory items ✅
 
 **Files:** extend `adapters/finance.py`; test `tests/test_finance_memory.py`.
 
@@ -102,7 +102,7 @@ verbatim into `docs/FINDINGS_FINANCE.md`; ambiguity → Questions section.
 Commit per task step.
 
 ## Execution log
-- Task A:
+- Task A: DONE — teacher_repair + distill_memory_item + entity scrub; tests/test_finance_memory.py; pytest 38 passed
 - Task B:
 - Task C:
 - Task D:
