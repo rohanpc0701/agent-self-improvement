@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
 # Staged TraceLift LIVE loop (OpenRouter). Resumeable; stops on gate stop-rule.
-# Train until TARGET_FAILURES, then candidates, then uplift gate (val-n/k cost-aware).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 LOG=runs/finance_tracelift_live.log
-TARGET_FAILURES="${TARGET_FAILURES:-20}"
+TARGET_FAILURES="${TARGET_FAILURES:-12}"
 VAL_N="${FINANCE_UPLIFT_VAL_N:-4}"
 K="${FINANCE_UPLIFT_K:-2}"
-CHUNK_S="${CHUNK_S:-540}"
+CHUNK_S="${CHUNK_S:-600}"
+export AGENT_TIMEOUT_S="${AGENT_TIMEOUT_S:-300}"
 
-echo "=== LOOP_START $(date -u +%Y-%m-%dT%H:%M:%SZ) pid=$$ target_fail=$TARGET_FAILURES val_n=$VAL_N k=$K ===" | tee -a "$LOG"
+mkdir -p runs
+PIDFILE=runs/finance_tracelift_loop.pid
+if [[ -f "$PIDFILE" ]]; then
+  old=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [[ -n "${old:-}" ]] && ps -p "$old" >/dev/null 2>&1; then
+    echo "LIVE loop already running pid=$old; exit" | tee -a "$LOG"
+    exit 0
+  fi
+fi
+echo $$ > "$PIDFILE"
+
+echo "=== LOOP_START $(date -u +%Y-%m-%dT%H:%M:%SZ) pid=$$ target_fail=$TARGET_FAILURES val_n=$VAL_N k=$K timeout=$AGENT_TIMEOUT_S ===" | tee -a "$LOG"
 
 fail_count() {
   python3 - <<'PY'
 import json
 from pathlib import Path
-rows=[json.loads(l) for l in Path("runs/finance_tracelift_state.jsonl").read_text().splitlines() if l.strip()] if Path("runs/finance_tracelift_state.jsonl").exists() else []
-fails={r["key"] for r in rows if r.get("kind")=="train_grade" and r.get("ok") and r.get("failure")}
-print(len(fails))
+p=Path("runs/finance_tracelift_state.jsonl")
+rows=[json.loads(l) for l in p.read_text().splitlines() if l.strip()] if p.exists() else []
+print(len({r["key"] for r in rows if r.get("kind")=="train_grade" and r.get("ok") and r.get("failure")}))
 PY
 }
 
@@ -25,13 +36,12 @@ cand_pending() {
   python3 - <<'PY'
 import json
 from pathlib import Path
-rows=[json.loads(l) for l in Path("runs/finance_tracelift_state.jsonl").read_text().splitlines() if l.strip()] if Path("runs/finance_tracelift_state.jsonl").exists() else []
+p=Path("runs/finance_tracelift_state.jsonl")
+rows=[json.loads(l) for l in p.read_text().splitlines() if l.strip()] if p.exists() else []
 fails={r["key"] for r in rows if r.get("kind")=="train_grade" and r.get("ok") and r.get("failure")}
-done={r["qid"] for r in rows if r.get("kind")=="candidate" and r.get("ok")}
-# each failure wants 3 kinds; approximate pending as failures lacking any cand
 need=0
 for q in fails:
-    kinds={r["mem_kind"] for r in rows if r.get("kind")=="candidate" and r.get("qid")==q and r.get("ok")}
+    kinds={r.get("mem_kind") for r in rows if r.get("kind")=="candidate" and r.get("qid")==q and r.get("ok")}
     need += max(0, 3-len(kinds))
 print(need)
 PY
@@ -54,14 +64,10 @@ print("uplift_ok", len(ups), "admitted", sum(1 for r in ups if r.get("admitted")
 stops=[r for r in rows if r.get("kind")=="stop"]
 if stops:
   print("STOP_SEEN", stops[-1].get("reason"))
-mem=Path("runs/finance_tracelift_memory.json")
-if mem.exists():
-  d=json.loads(mem.read_text())
-  print("memory_n", d.get("n"), "dry_run", (d.get("meta") or {}).get("dry_run"))
 PY
 }
 
-for i in $(seq 1 200); do
+for i in $(seq 1 300); do
   echo "=== TRACECHUNK $i $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" | tee -a "$LOG"
   snapshot
   if has_stop; then
@@ -77,7 +83,7 @@ for i in $(seq 1 200); do
   if [[ "$FC" -lt "$TARGET_FAILURES" ]]; then
     echo "[phase] train" | tee -a "$LOG"
     PYTHONUNBUFFERED=1 bash scripts/use_openrouter_finance.sh scripts/finance_tracelift.py \
-      --phase train --resume --time-budget-s "$CHUNK_S" --max-new 4 \
+      --phase train --resume --time-budget-s "$CHUNK_S" --max-new 3 \
       --target-failures "$TARGET_FAILURES" \
       --student-model qwen/qwen3.6-27b \
       >>"$LOG" 2>&1 || true
@@ -95,7 +101,7 @@ for i in $(seq 1 200); do
 
   echo "[phase] gate val_n=$VAL_N k=$K" | tee -a "$LOG"
   PYTHONUNBUFFERED=1 bash scripts/use_openrouter_finance.sh scripts/finance_tracelift.py \
-    --phase gate --resume --time-budget-s "$CHUNK_S" --max-new 2 \
+    --phase gate --resume --time-budget-s "$CHUNK_S" --max-new 1 \
     --val-n "$VAL_N" --k "$K" --min-u 1.0 \
     --student-model qwen/qwen3.6-27b \
     >>"$LOG" 2>&1 || true
