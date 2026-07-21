@@ -8,6 +8,8 @@ from harness.agent import (
     ProviderPinError,
     _chat_with_retry,
     openrouter_provider_pin,
+    provider_fallback_count,
+    reset_provider_fallback_count,
 )
 
 OR = "https://openrouter.ai/api/v1"
@@ -18,8 +20,9 @@ PINNED = "deepseek/deepseek-v4-pro"
 def _openrouter_env(monkeypatch):
     monkeypatch.setenv("AGENT_BASE_URL", OR)
     monkeypatch.setenv("OPENROUTER_PIN_MODEL", PINNED)
-    monkeypatch.setenv("OPENROUTER_PROVIDER_ORDER", "fireworks")
+    monkeypatch.setenv("OPENROUTER_PROVIDER_ORDER", "fireworks,together")
     monkeypatch.delenv("OPENROUTER_PROVIDER_QUANT", raising=False)
+    reset_provider_fallback_count()
 
 
 class _Resp:
@@ -50,7 +53,7 @@ def test_pin_block_shape():
     pin = openrouter_provider_pin(PINNED)
     assert pin == {
         "provider": {
-            "order": ["fireworks"],
+            "order": ["fireworks", "together"],
             "allow_fallbacks": False,
             "require_parameters": True,
         }
@@ -71,7 +74,7 @@ def test_pin_injected_into_request():
     record = []
     client = _Client("fireworks", record)
     _chat_with_retry(client, model=PINNED, messages=[])
-    assert record[0]["extra_body"]["provider"]["order"] == ["fireworks"]
+    assert record[0]["extra_body"]["provider"]["order"] == ["fireworks", "together"]
     assert record[0]["extra_body"]["provider"]["allow_fallbacks"] is False
 
 
@@ -81,13 +84,26 @@ def test_pin_reapplied_even_if_caller_clears_extra_body():
     # caller passes extra_body without provider (e.g. an empty-content retry)
     _chat_with_retry(client, model=PINNED, messages=[], extra_body={"reasoning": {"enabled": False}})
     eb = record[0]["extra_body"]
-    assert eb["provider"]["order"] == ["fireworks"]  # pin re-added
-    assert eb["reasoning"] == {"enabled": False}      # caller's field preserved
+    assert eb["provider"]["order"] == ["fireworks", "together"]  # pin re-added
+    assert eb["reasoning"] == {"enabled": False}                 # caller's field preserved
 
 
-def test_provider_drift_raises():
-    client = _Client("together", [])  # served by a DIFFERENT provider
-    with pytest.raises(ProviderPinError, match="drift"):
+def test_primary_provider_silent_no_fallback_count():
+    client = _Client("fireworks", [])
+    _chat_with_retry(client, model=PINNED, messages=[])
+    assert provider_fallback_count() == 0
+
+
+def test_backup_provider_warns_and_counts_not_raises(capsys):
+    client = _Client("together", [])  # permitted backup
+    _chat_with_retry(client, model=PINNED, messages=[])  # must NOT raise
+    assert provider_fallback_count() == 1
+    assert "PROVIDER FALLBACK" in capsys.readouterr().err
+
+
+def test_provider_outside_allowlist_raises():
+    client = _Client("deepinfra", [])  # NOT in fireworks,together
+    with pytest.raises(ProviderPinError, match="outside allow-list"):
         _chat_with_retry(client, model=PINNED, messages=[])
 
 

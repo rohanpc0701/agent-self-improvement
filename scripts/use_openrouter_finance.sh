@@ -40,11 +40,13 @@ export STUDENT_MAX_TOKENS="${STUDENT_MAX_TOKENS:-8192}"
 unset AGENT_FORCE_NO_THINKING 2>/dev/null || true
 
 # ── Provider pinning (reproducibility) ──────────────────────────────────────
-# Every request to OPENROUTER_PIN_MODEL is forced onto ONE provider with no
-# fallbacks, so serving config / quantization can't drift between runs.
+# Requests to OPENROUTER_PIN_MODEL are constrained to this ordered allow-list
+# and NOTHING else: primary first, backups after. Fireworks primary, Together
+# backup. Any request served by a backup emits a loud stderr warning and is
+# counted (report via harness.agent.provider_fallback_count()).
 # Fill exact values from https://openrouter.ai/deepseek/deepseek-v4-pro/providers
 export OPENROUTER_PIN_MODEL="${OPENROUTER_PIN_MODEL:-deepseek/deepseek-v4-pro}"
-export OPENROUTER_PROVIDER_ORDER="${OPENROUTER_PROVIDER_ORDER:-fireworks}"   # provider slug (Fireworks)
+export OPENROUTER_PROVIDER_ORDER="${OPENROUTER_PROVIDER_ORDER:-fireworks,together}"   # primary,backup (only these)
 export OPENROUTER_PROVIDER_QUANT="${OPENROUTER_PROVIDER_QUANT:-}"            # PLACEHOLDER: e.g. fp8 — leave empty to not pin quant
 
 echo "== finance on OpenRouter =="

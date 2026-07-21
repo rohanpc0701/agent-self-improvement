@@ -48,25 +48,50 @@ def _pinned_model() -> str:
     return os.environ.get("OPENROUTER_PIN_MODEL", "deepseek/deepseek-v4-pro").strip()
 
 
+def _provider_order() -> list[str]:
+    # Ordered allow-list. First = primary; the rest = permitted fallbacks (only
+    # these, nothing else). Comma-separated, e.g. "fireworks,together".
+    raw = os.environ.get("OPENROUTER_PROVIDER_ORDER", "fireworks")
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+# How many pinned requests were served by a NON-primary (backup) provider.
+_provider_fallback_count = 0
+
+
+def provider_fallback_count() -> int:
+    """Number of pinned requests served by a backup provider (not the primary).
+
+    Runs should report this — any value > 0 means some results came from a
+    different serving config than the primary provider.
+    """
+    return _provider_fallback_count
+
+
+def reset_provider_fallback_count() -> None:
+    global _provider_fallback_count
+    _provider_fallback_count = 0
+
+
 def openrouter_provider_pin(model: str) -> dict:
     """Return the OpenRouter `provider` routing object for a pinned model, else {}.
 
-    Pins to a SINGLE provider with no fallbacks so every request to the target
-    model is served identically. Config-driven (never hardcoded inline):
-      OPENROUTER_PROVIDER_ORDER  provider slug, e.g. "fireworks"  (default: fireworks)
-      OPENROUTER_PROVIDER_QUANT  optional precision lock, e.g. "fp8" (unset = don't pin quant)
+    Constrains the model to an ORDERED allow-list of providers and nothing else
+    (allow_fallbacks=false = never route outside the list). Config-driven:
+      OPENROUTER_PROVIDER_ORDER  comma list, primary first (default "fireworks,together")
+      OPENROUTER_PROVIDER_QUANT  optional precision lock, e.g. "fp8" (unset = don't pin)
       OPENROUTER_PIN_MODEL       model slug to pin (default deepseek/deepseek-v4-pro)
     Only applies on the OpenRouter base and only for the pinned model, so other
-    models (judge, teacher on other providers) are untouched.
+    models (judge, teacher) are untouched.
     """
     if not _is_openrouter() or (model or "").strip() != _pinned_model():
         return {}
-    order = os.environ.get("OPENROUTER_PROVIDER_ORDER", "fireworks").strip()
+    order = _provider_order()
     if not order:
         return {}
     provider: dict = {
-        "order": [order],
-        "allow_fallbacks": False,  # hard-fail instead of silently switching providers
+        "order": order,             # try primary, then permitted backups, in order
+        "allow_fallbacks": False,   # NEVER route to a provider outside this list
         "require_parameters": True,  # exclude providers that ignore our sampling params
     }
     quant = os.environ.get("OPENROUTER_PROVIDER_QUANT", "").strip()
@@ -76,25 +101,44 @@ def openrouter_provider_pin(model: str) -> dict:
 
 
 def _assert_provider(resp, model: str) -> None:
-    """After a pinned call, verify OpenRouter used the provider we asked for."""
+    """Verify the served provider is in our allow-list; warn loudly on fallback.
+
+    - primary (order[0])         → OK, silent
+    - a permitted backup         → OK but LOUD warning + fallback counter bumped
+    - anything outside the list  → ProviderPinError (real drift, abort)
+    """
     pin = openrouter_provider_pin(model)
     if not pin:
         return
-    want = pin["provider"]["order"][0]
+    order = [p.lower() for p in pin["provider"]["order"]]
+    primary = order[0]
     used = getattr(resp, "provider", None) or (
         (getattr(resp, "model_extra", None) or {}).get("provider")
     )
     if used is None:
-        # OpenRouter normally returns `provider`; if absent, don't silently pass.
         raise ProviderPinError(
             f"pinned model {model!r} but response had no provider field to verify "
-            f"(expected {want!r})"
+            f"(expected {primary!r})"
         )
-    if str(used).strip().lower() != want.strip().lower():
-        raise ProviderPinError(
-            f"provider drift: pinned {want!r} but OpenRouter served {used!r} "
-            f"for {model!r} — aborting to avoid contaminated data"
+    used_l = str(used).strip().lower()
+    if used_l == primary:
+        return
+    if used_l in order:
+        global _provider_fallback_count
+        _provider_fallback_count += 1
+        print(
+            f"⚠️ PROVIDER FALLBACK: {model} served by {used!r} "
+            f"(primary {pin['provider']['order'][0]!r} unavailable) — "
+            f"result from a backup serving config [fallbacks so far: "
+            f"{_provider_fallback_count}]",
+            file=__import__("sys").stderr,
+            flush=True,
         )
+        return
+    raise ProviderPinError(
+        f"provider drift: {model!r} served by {used!r}, outside allow-list "
+        f"{pin['provider']['order']} — aborting to avoid contaminated data"
+    )
 
 
 def _chat_with_retry(client, *, max_retries: int = 5, **kwargs):
