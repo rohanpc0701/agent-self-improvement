@@ -255,3 +255,53 @@ content vs 150-char stubs.
 reasoning*; the earlier nulls (coding, GSM8K, boilerplate-finance) were
 memory-quality failures, not proof the mechanism can't work. Confirmation
 (more questions + repeats to beat noise) pending.
+
+## H. TraceLift A1 vs A4 — k=3 CONFIRMATION overturns the first signal (2026-07-21)
+
+Re-ran §G with **K=3 repeats per arm per question, averaged**, to remove the
+run-to-run student/judge nondeterminism. Same 7 Credit/Trading held-out, good
+(teacher-distilled) memory.
+
+| qid | cat | A1 (k=3) | A4 (k=3) | Δ | single-pass Δ (§G) |
+|---|---|---:|---:|---:|---:|
+| fpb-00375 | Trading | 32.8 | 32.0 | −0.8 | (fail) |
+| fpb-00102 | Credit | 13.0 | 19.9 | +6.9 | −1.2 |
+| fpb-00364 | Trading | 2.1 | 5.0 | +2.9 | +0.0 |
+| fpb-00006 | Credit | 26.2 | 18.3 | −7.9 | +4.8 |
+| fpb-00380 | Trading | 49.6 | 36.3 | **−13.2** | **+17.9** |
+| fpb-00108 | Credit | SKIP (rubric lacks `Item R*(max N)`) | | | |
+| **mean** | | **24.7** | **22.3** | **GAP = −2.4** | (single-pass +5.6) |
+
+### Verdict: the +5.6 was noise; averaged GAP is null-to-negative
+
+- The single-pass headline (+5.6) **did not survive averaging** — averaged GAP
+  ≈ **−2.4**. The largest positive contributor, fpb-00380 (+17.9 single-pass),
+  **reversed to −13.2** under k=3 on identical temp-0 inputs.
+- Per-question temp-0 nondeterminism is **±10–20 normalized pts** (e.g. fpb-00364
+  A1 = 27.5 single-pass vs 2.1 here; fpb-00006 +4.8 → −7.9). Single-pass deltas
+  on this stack are meaningless below ~±15 pts.
+- **Three domains now agree** (coding, GSM8K, finance): teacher-built ICL memory
+  does not reliably improve this class of student once noise is averaged out.
+
+### What the methodology bought
+
+Without the k=3 confirmation we would have reported "TraceLift lifts qwen3.6-27b
++5.6, clears the +4 bar" — a false positive. The variance protocol (established
+in the coding phase: deltas below the noise floor need ≥3 repeats) caught it.
+That noise discipline is the durable asset.
+
+### What is and isn't established
+- **Pipeline works end-to-end** (student → GLM repair → transferable distillation
+  → injection → judge). Distillation quality fix (commit 4d81ef6) is real and
+  necessary — boilerplate memory hurt (−6.1), good memory is at least not
+  harmful on average.
+- **NOT established:** that TraceLift memory helps. Averaged signal is ~null
+  (−2.4, n=5, no CI). Honest read: no reliable lift.
+- Caveats: n=5, Credit/Trading only, ungated memory (harness gating unreliable),
+  one question unscoreable (rubric format).
+
+### If pushed further (not concluded here)
+Larger held-out across more categories + ≥3 repeats + paired bootstrap; and the
+uplift gate (which this run bypassed) might filter to the subset of items that
+help — but on this evidence, ICL memory is at best marginal for a ~27B student
+on expert rubric reasoning.
