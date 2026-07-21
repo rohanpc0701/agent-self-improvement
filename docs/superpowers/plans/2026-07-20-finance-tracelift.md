@@ -82,7 +82,7 @@ breakdown, paired bootstrap CI. Numbers verbatim → `docs/FINDINGS_FINANCE.md`.
   stop iteration → `docs/FINDINGS_FINANCE.md`.
 - Commit: `feat: finance TraceLift build loop with uplift gate + stopping rule`
 
-### Task D — Held-out eval A1 / A4 (+A5, +A2 if time)
+### Task D — Held-out eval A1 / A4 (+A5, +A2 if time) ✅ code
 
 **Files:** extend `scripts/finance_baselines.py` (memory arm) or new
 `scripts/finance_eval.py`; tests.
@@ -105,7 +105,7 @@ Commit per task step.
 - Task A: DONE — teacher_repair + distill_memory_item + entity scrub; tests/test_finance_memory.py; pytest 38 passed
 - Task B: DONE — category-keyed select_category_memory (1+2+1), AGENT_USE_EXAMPLES gate, injection_stats.by_kind; firewall intact
 - Task C: CODE DONE — scripts/finance_tracelift.py + tests; Prime JSONL archived; [LIVE] in progress
-- Task D:
+- Task D: CODE DONE — scripts/finance_eval.py A1/A4/A5 + paired bootstrap; [LIVE] pending frozen memory
 
 ## Questions
 (none yet)
