@@ -147,9 +147,46 @@ Incomplete pairs (excluded from n=17): `fpb-00262` (bad rubric), `fpb-00072`
 
 ## E. TraceLift memory build (Task C)
 
-*(LIVE numbers pending — saturation curve / admit stats filled after OpenRouter run.)*
+**Platform:** OpenRouter only (`scripts/use_openrouter_finance.sh`).
+Prime-era `runs/finance_heldout_*` / `finance_headroom_*answers|grades.jsonl` archived to `runs/archive_prime_platform/`.
+
+**Models:** student `qwen/qwen3.6-27b`, teacher `z-ai/glm-5.2`, judge `openai/gpt-5.2`.
+
+### Train-stream probe (chunk 1, time-budget 540s)
+
+State: `runs/finance_tracelift_state.jsonl`. Verbatim from first LIVE chunk:
+
+| qid | category | normalized | failure (<40)? |
+|-----|----------|-----------:|:---------------|
+| fpb-00106 | Credit | **28.40909090909091** | yes |
+| fpb-00377 | Trading | **36.84210526315789** | yes |
+| fpb-00155 | Investment Banking | **14.772727272727273** | yes |
+
+- Graded: **3** / 200 train-stream
+- Failures: **3** / 3 (100% under fail-threshold 40)
+- Wall time ≈ **853s** for 3 Qs (student empty-content retries on thinking SKU; mitigated later via `STUDENT_MAX_TOKENS=8192`)
+
+### Candidates
+
+- First LIVE candidate chunk distilled **3** items for `fpb-00106` (playbook/trap/skeleton) then rows were lost from state (concurrent runner / file race). Rebuild in progress via `--phase all` loop.
+- Teacher GLM 5.2: ≈3–4 min per repair at `TEACHER_MAX_TOKENS=4000`.
+
+### Uplift gate / freeze
+
+- Protocol target: val_n=80, K=2, keep u_norm > +1, stop on window(15) mean u < +0.5 or admit rate < 20%.
+- Implementation default: `--val-n` from `FINANCE_UPLIFT_VAL_N` (12) for cost; bare-baseline cache added.
+- **Admitted / frozen store:** not yet (still collecting train failures + candidates). Memory file currently dry-run placeholder.
+
+### Blockers
+
+1. Per-question latency on OpenRouter qwen3.6-27b (reasoning + retries) → train coverage slow.
+2. GLM 5.2 teacher latency → candidate throughput ~1 item / few minutes.
+3. Full uplift on 80×K=2 per candidate is cost-prohibitive in one session; using smaller val slice until more candidates exist.
+
 
 ## F. Held-out A1 vs A4 (Task D)
 
-*(pending)*
+Harness ready: `scripts/finance_eval.py` (A1/A4/A5, paired bootstrap).
+**LIVE A1/A4 numbers:** blocked on frozen TraceLift memory from §E.
+
 

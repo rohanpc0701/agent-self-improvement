@@ -104,8 +104,8 @@ Commit per task step.
 ## Execution log
 - Task A: DONE — teacher_repair + distill_memory_item + entity scrub; tests/test_finance_memory.py; pytest 38 passed
 - Task B: DONE — category-keyed select_category_memory (1+2+1), AGENT_USE_EXAMPLES gate, injection_stats.by_kind; firewall intact
-- Task C: CODE DONE — scripts/finance_tracelift.py + tests; Prime JSONL archived; [LIVE] in progress
-- Task D: CODE DONE — scripts/finance_eval.py A1/A4/A5 + paired bootstrap; [LIVE] pending frozen memory
+- Task C: CODE DONE + LIVE train probe (3/200 fails all; norms in FINDINGS §E); candidates/gate still running via OpenRouter loop
+- Task D: CODE DONE — scripts/finance_eval.py; LIVE A1/A4 blocked on frozen memory
 
 ## Questions
 (none yet)
