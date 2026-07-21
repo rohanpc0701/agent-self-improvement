@@ -14,7 +14,7 @@ import re
 from statistics import mean
 from typing import Any
 
-from adapters.coding import _chat_with_retry
+from harness.agent import _chat_with_retry
 from openai import OpenAI
 
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "openai/gpt-5.2").strip()

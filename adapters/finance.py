@@ -290,7 +290,7 @@ def generate_answer(
         forbidden_rubric_stems=forbidden_rubric_stems,
     )
     client = agent._get_client()
-    from adapters.coding import _chat_with_retry
+    from harness.agent import _chat_with_retry
 
     # Thinking SKUs (qwen3.6-27b): on OpenRouter, chat_template_kwargs
     # enable_thinking=false is often ignored and still yields content=None
