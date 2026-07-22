@@ -58,14 +58,15 @@ def run_arm(arm: str, tid: str, rep: int, student_model: str, cache: dict,
     if arm == "A1":
         ans, meta = pr.generate_answer(task, cfg)
     elif arm == "A2":
-        ans, meta = pr.answer_with_retries(task, cfg)
+        # self-refine only (3 student passes, no teacher)
+        ans, meta = pr.answer_with_refine(task, cfg)
     elif arm == "A4":
+        # teacher hint + SAME 3-pass self-refine loop → equal compute to A2,
+        # only difference is Fable's guidance in context.
         hints = pr.teacher_hints(task)
-        meta = {"hint_chars": len(hints)}
         if show:
             print(f"\n--- Fable hint ({len(hints)} chars) ---\n{hints}\n---")
-        ans, s = pr.generate_answer(task, cfg, hints=hints)
-        meta.update(s)
+        ans, meta = pr.answer_with_refine(task, cfg, hints=hints)
     elif arm == "A5":
         ans = pr.answer_teacher_alone(task)
     else:

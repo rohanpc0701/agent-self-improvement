@@ -165,11 +165,13 @@ def teacher_hints(task_or_question, *, client=None, model: str | None = None,
         client, resolved = teacher_client_and_model()
     else:
         resolved = model or os.environ.get("TEACHER_MODEL") or "anthropic/claude-fable-5"
+    # max_tokens capped to enforce the <=300-token guidance limit (fairness: A4
+    # must be a HINT, not a full plan/answer). Dry-run showed 700 → 450-token hints.
     resp = _chat_with_retry(
         client, model=resolved,
         messages=[{"role": "system", "content": _HINT_SYSTEM},
                   {"role": "user", "content": f"Problem (answer the final turn):\n{convo}"}],
-        temperature=0.0, max_tokens=700,
+        temperature=0.0, max_tokens=350,
     )
     return (resp.choices[0].message.content or "").strip()
 
@@ -199,14 +201,17 @@ _CRITIQUE = (
 _REVISE = "Now produce an improved final answer addressing every gap you listed."
 
 
-def answer_with_retries(task_or_question, config) -> tuple[str, dict]:
-    """A2 compute-matched control: student answers, self-critiques, revises. No teacher.
+def answer_with_refine(task_or_question, config, hints: str = "") -> tuple[str, dict]:
+    """Shared self-refine loop (answer → self-critique → revise), 3 student passes.
 
-    Spends extra compute the 'dumb' way (its own reasoning) to match A4's hint overhead —
-    isolates 'teacher content' from 'more inference compute'.
+    A2 = answer_with_refine(task, cfg)              (no teacher)
+    A4 = answer_with_refine(task, cfg, hints=...)   (Fable guidance in the loop)
+    Both spend the SAME 3 student passes — the ONLY difference is whether the
+    teacher's hint is present. That isolates 'teacher content' from 'more compute',
+    and tests the honest question: does guidance beat free self-refinement?
     """
     turns = _turns_of(task_or_question)
-    base_msgs = _student_messages(turns, [])
+    base_msgs = _student_messages(turns, [], hints=hints)
     a0 = _student_call(base_msgs, config.model)
     crit_msgs = base_msgs + [{"role": "assistant", "content": a0},
                              {"role": "user", "content": _CRITIQUE}]
@@ -214,7 +219,12 @@ def answer_with_retries(task_or_question, config) -> tuple[str, dict]:
     rev_msgs = crit_msgs + [{"role": "assistant", "content": crit},
                             {"role": "user", "content": _REVISE}]
     final = _student_call(rev_msgs, config.model)
-    return final, {"passes": 3, "critique_chars": len(crit)}
+    return final, {"passes": 3, "critique_chars": len(crit), "hint_chars": len(hints)}
+
+
+# Back-compat alias (A2 = no-hint refine).
+def answer_with_retries(task_or_question, config) -> tuple[str, dict]:
+    return answer_with_refine(task_or_question, config, hints="")
 
 
 def teacher_repair(tid: str, student_answer: str, *, client=None, model: str | None = None,
