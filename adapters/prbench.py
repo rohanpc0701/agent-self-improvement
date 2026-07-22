@@ -171,7 +171,7 @@ def teacher_hints(task_or_question, *, client=None, model: str | None = None,
         client, model=resolved,
         messages=[{"role": "system", "content": _HINT_SYSTEM},
                   {"role": "user", "content": f"Problem (answer the final turn):\n{convo}"}],
-        temperature=0.0, max_tokens=350,
+        temperature=0.0, max_tokens=450,
     )
     return (resp.choices[0].message.content or "").strip()
 
@@ -218,7 +218,7 @@ def build_memory_item(task_or_question, student_answer: str, teacher_answer: str
         client, model=resolved,
         messages=[{"role": "system", "content": _MEMORY_SYSTEM},
                   {"role": "user", "content": prompt}],
-        temperature=0.0, max_tokens=350,
+        temperature=0.0, max_tokens=450,
     )
     body = (resp.choices[0].message.content or "").strip()
     # leak-scrub against the source question's entities
