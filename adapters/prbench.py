@@ -230,6 +230,31 @@ def build_memory_item(task_or_question, student_answer: str, teacher_answer: str
                           domain_id=_TOPIC, source="tracelift")
 
 
+# Reasoning-model teacher (Fable) emits hidden reasoning tokens BEFORE visible
+# content, and max_tokens caps the total. On a hard finance answer, a 4000 budget
+# is entirely consumed by reasoning -> finish_reason "length" -> EMPTY content,
+# returned silently. Default high enough that the answer survives; the distill call
+# (short output) keeps its own tight cap.
+TEACHER_MAX_TOKENS_DEFAULT = "12000"
+
+
+def _teacher_max_tokens() -> int:
+    return int(os.environ.get("TEACHER_MAX_TOKENS") or TEACHER_MAX_TOKENS_DEFAULT)
+
+
+def _teacher_text(resp, where: str) -> str:
+    """Extract teacher content; loudly flag the silent-empty failure mode."""
+    import sys
+    ch = resp.choices[0]
+    text = (ch.message.content or "").strip()
+    if not text:
+        fr = getattr(ch, "finish_reason", None)
+        print(f"WARNING: teacher returned EMPTY content in {where} "
+              f"(finish_reason={fr}). If 'length', raise TEACHER_MAX_TOKENS — "
+              f"reasoning models need ~12k on long answers.", file=sys.stderr)
+    return text
+
+
 def answer_teacher_alone(task_or_question, *, client=None, model: str | None = None) -> str:
     """A5 ceiling: the teacher solves the task directly (full answer)."""
     from correction.provider import teacher_client_and_model
@@ -243,9 +268,9 @@ def answer_teacher_alone(task_or_question, *, client=None, model: str | None = N
     resp = _chat_with_retry(
         client, model=resolved,
         messages=[{"role": "system", "content": _SYSTEM}, *turns],
-        temperature=0.0, max_tokens=int(os.environ.get("TEACHER_MAX_TOKENS", "4000")),
+        temperature=0.0, max_tokens=_teacher_max_tokens(),
     )
-    return (resp.choices[0].message.content or "").strip()
+    return _teacher_text(resp, "answer_teacher_alone")
 
 
 _CRITIQUE = (
@@ -306,9 +331,9 @@ def teacher_repair(tid: str, student_answer: str, *, client=None, model: str | N
     resp = _chat_with_retry(
         client, model=resolved,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.0, max_tokens=int(os.environ.get("TEACHER_MAX_TOKENS", "4000")),
+        temperature=0.0, max_tokens=_teacher_max_tokens(),
     )
-    return (resp.choices[0].message.content or "").strip()
+    return _teacher_text(resp, "teacher_repair")
 
 
 def distill_memory_item(tid: str, repaired: str, *, kind: str = "playbook",

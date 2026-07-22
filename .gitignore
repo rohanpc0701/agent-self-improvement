@@ -22,3 +22,5 @@ runs/
 # probe resume log (intermediate); final fixture+manifest are committed
 # runs/probe_results.jsonl lives under runs/
 .venv-alfworld/
+# PRBench cache is committed on purpose (small, needed for splits)
+.DS_Store
