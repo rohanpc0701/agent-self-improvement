@@ -176,6 +176,60 @@ def teacher_hints(task_or_question, *, client=None, model: str | None = None,
     return (resp.choices[0].message.content or "").strip()
 
 
+_MEMORY_SYSTEM = (
+    "You are a senior corporate-finance expert writing a REUSABLE lesson for a junior "
+    "analyst who keeps making the same class of mistakes. You are shown your own strong "
+    "answer, the junior's weaker answer, and the specific things the junior missed. "
+    "Distill ONE transferable lesson that would help on OTHER similar problems.\n"
+    "HARD RULES: <=250 tokens. General principle/procedure only — framework names, "
+    "ordered steps, the trap and the fix. Do NOT reference this specific problem's "
+    "numbers, entities, or answer. It must transfer to new questions in this domain."
+)
+
+
+def build_memory_item(task_or_question, student_answer: str, teacher_answer: str,
+                      missed: list[str], *, kind: str = "playbook",
+                      client=None, model: str | None = None):
+    """Contrastive memory: Fable(teacher answer, student answer, missed criteria)
+    → one transferable lesson (leak-scrubbed, capped). Returns FewShotExample."""
+    from adapters.finance import strip_named_entities, extract_named_entities, _token_trim
+    from correction.provider import teacher_client_and_model
+    from harness.agent import _chat_with_retry
+
+    turns = _turns_of(task_or_question)
+    q = turns[-1]["content"]
+    miss = "\n".join(f"- {m}" for m in missed[:12]) or "(subtle gaps)"
+    kind_ask = {
+        "playbook": "Write a PLAYBOOK (ordered steps to apply on any such problem).",
+        "trap": "Write the ONE most important TRAP the junior fell into: 'TRAP: <trigger> → <fix>'.",
+        "skeleton": "Write a compact reasoning SKELETON (issue → framework → steps → conclusion).",
+    }[kind]
+    prompt = (
+        f"Problem:\n{q[:1500]}\n\n"
+        f"Your (expert) answer:\n{teacher_answer[:1500]}\n\n"
+        f"Junior's answer:\n{student_answer[:1500]}\n\n"
+        f"What the junior MISSED (graded):\n{miss}\n\n{kind_ask}"
+    )
+    if client is None:
+        client, resolved = teacher_client_and_model()
+    else:
+        resolved = model or os.environ.get("TEACHER_MODEL") or "anthropic/claude-fable-5"
+    resp = _chat_with_retry(
+        client, model=resolved,
+        messages=[{"role": "system", "content": _MEMORY_SYSTEM},
+                  {"role": "user", "content": prompt}],
+        temperature=0.0, max_tokens=350,
+    )
+    body = (resp.choices[0].message.content or "").strip()
+    # leak-scrub against the source question's entities
+    ents = extract_named_entities(q)
+    body = strip_named_entities(_token_trim(body, 250), ents)
+    prefix = {"playbook": "[FINANCE_PLAYBOOK]", "trap": "[FINANCE_TRAP]",
+              "skeleton": "[FINANCE_SKELETON]"}[kind]
+    return FewShotExample(question=f"{prefix} {_TOPIC}", correct_output=body,
+                          domain_id=_TOPIC, source="tracelift")
+
+
 def answer_teacher_alone(task_or_question, *, client=None, model: str | None = None) -> str:
     """A5 ceiling: the teacher solves the task directly (full answer)."""
     from correction.provider import teacher_client_and_model

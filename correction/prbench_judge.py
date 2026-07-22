@@ -73,12 +73,18 @@ def score_from_decisions(rubric: list[dict], decisions: dict[int, bool]) -> dict
         if decisions.get(i):  # criterion satisfied/committed
             raw += c["weight"]
     clamped = max(0.0, min(raw, max_pts))
+    # Mistakes = REQUIRED criteria not satisfied + AVOID criteria committed.
+    missed = [rubric[i - 1]["description"] for i in range(1, len(rubric) + 1)
+              if (rubric[i - 1]["weight"] > 0 and not decisions.get(i))
+              or (rubric[i - 1]["weight"] < 0 and decisions.get(i))]
     return {
         "raw": raw,
         "max": max_pts,
         "normalized": clamped / max_pts * 100.0,
         "n_criteria": len(rubric),
         "n_decided": len(decisions),
+        "decisions": decisions,
+        "missed": missed,
     }
 
 

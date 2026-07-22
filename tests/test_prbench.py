@@ -127,3 +127,19 @@ class TestPlannerExecutor:
         import adapters.prbench as pr
         msgs = pr._student_messages([{"role": "user", "content": "q"}], [])
         assert "Approach guidance" not in msgs[0]["content"]
+
+
+class TestContrastiveMemory:
+    def test_missed_criteria_surfaced(self):
+        from correction.prbench_judge import score_from_decisions
+        rub = [{"description": "size the shock", "weight": 10.0, "weight_class": "critically important"},
+               {"description": "avoid double-count", "weight": -5.0, "weight_class": "detrimental"}]
+        # student missed the required one, and committed the trap
+        out = score_from_decisions(rub, {1: False, 2: True})
+        assert "size the shock" in out["missed"]        # required-but-unsatisfied
+        assert "avoid double-count" in out["missed"]    # detrimental-committed
+
+    def test_memory_system_forbids_specifics(self):
+        import adapters.prbench as pr
+        s = pr._MEMORY_SYSTEM.lower()
+        assert "transfer" in s and "do not reference this specific problem" in s and "250" in s
