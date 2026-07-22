@@ -84,8 +84,16 @@ _SYSTEM = (
 )
 
 
-def _student_messages(turns: list[dict], memory: list[FewShotExample]) -> list[dict]:
-    """system (+ optional memory) then the conversation; student answers the last turn."""
+def _turns_of(task_or_question) -> list[dict]:
+    if isinstance(task_or_question, dict):
+        return task_or_question.get("turns") or [
+            {"role": "user", "content": task_or_question["question"]}
+        ]
+    return [{"role": "user", "content": str(task_or_question)}]
+
+
+def _student_messages(turns: list[dict], memory: list[FewShotExample], hints: str = "") -> list[dict]:
+    """system (+ optional memory, + optional teacher hints) then the conversation."""
     from adapters.finance import select_category_memory, memory_kind_of
 
     system = _SYSTEM
@@ -97,41 +105,116 @@ def _student_messages(turns: list[dict], memory: list[FewShotExample]) -> list[d
                 blocks.append(f"Memory {i} [{memory_kind_of(ex) or 'other'}]:\n"
                               f"{ex.question}\n{ex.correct_output}")
             system = system + "\n\n" + "\n\n".join(blocks)
+    if hints:
+        system = (system + "\n\nApproach guidance from a senior expert (follow it; "
+                  "it is guidance only — you must do the actual reasoning and math):\n" + hints)
     return [{"role": "system", "content": system}, *turns]
 
 
-def generate_answer(task_or_question, config, memory: list[FewShotExample] | None = None):
-    """Student answers the final turn of a task (single- or multi-turn).
-
-    Accepts a task dict (uses its `turns`) or a bare question string (single turn).
-    Returns (answer_text, stats).
-    """
+def _student_call(messages: list[dict], model: str, max_tokens: int | None = None):
     from harness import agent
     from harness.agent import _chat_with_retry
 
-    if isinstance(task_or_question, dict):
-        turns = task_or_question.get("turns") or [
-            {"role": "user", "content": task_or_question["question"]}
-        ]
-    else:
-        turns = [{"role": "user", "content": str(task_or_question)}]
-
-    mem = memory if memory is not None else list(config.few_shot_examples)
-    messages = _student_messages(turns, mem)
-    injected = sum(1 for m in messages if m["role"] == "system") - 1  # 0 or memory present
-    stats = {"examples_injected": len([m for m in mem if not m.domain_id or m.domain_id == _TOPIC][:4]),
-             "n_turns": sum(1 for t in turns if t["role"] == "user")}
-
     client = agent._get_client()
-    max_tokens = int(os.environ.get("STUDENT_MAX_TOKENS", "6000"))
+    mt = max_tokens or int(os.environ.get("STUDENT_MAX_TOKENS", "6000"))
     extra = {}
     if os.environ.get("AGENT_ENABLE_THINKING", "").strip() not in ("1", "true", "yes"):
-        extra = {"reasoning": {"enabled": False}}  # clean content, no reasoning waste
-    resp = _chat_with_retry(client, model=config.model, messages=messages,
-                            temperature=0.0, max_tokens=max_tokens,
+        extra = {"reasoning": {"enabled": False}}
+    resp = _chat_with_retry(client, model=model, messages=messages,
+                            temperature=0.0, max_tokens=mt,
                             **({"extra_body": extra} if extra else {}))
-    text = (resp.choices[0].message.content or "").strip()
-    return text, stats
+    return (resp.choices[0].message.content or "").strip()
+
+
+def generate_answer(task_or_question, config, memory: list[FewShotExample] | None = None,
+                    hints: str = ""):
+    """Student answers the final turn (A1 with no memory/hints; A4 with hints)."""
+    turns = _turns_of(task_or_question)
+    mem = memory if memory is not None else list(config.few_shot_examples)
+    messages = _student_messages(turns, mem, hints=hints)
+    stats = {"examples_injected": len([m for m in mem if not m.domain_id or m.domain_id == _TOPIC][:4]),
+             "n_turns": sum(1 for t in turns if t["role"] == "user"),
+             "hint_chars": len(hints)}
+    return _student_call(messages, config.model), stats
+
+
+# ── Planner–executor arms ────────────────────────────────────────────────────
+
+_HINT_SYSTEM = (
+    "You are a senior corporate-finance expert coaching a junior analyst. Reason "
+    "through the problem yourself, then give ONLY short approach guidance the junior "
+    "should follow: the framework to apply, the ordered steps, and the traps to avoid. "
+    "HARD RULES: <=300 tokens. Do NOT state the final answer, specific numeric results, "
+    "or conclusions — guidance on HOW to approach only, so the junior does the actual work."
+)
+
+
+def teacher_hints(task_or_question, *, client=None, model: str | None = None,
+                  manifest: dict | None = None) -> str:
+    """A4 teacher step: Fable reasons, then emits <=300-token guidance (no answer).
+
+    Rubric-blind: the teacher never sees the rubric here (held-out firewall holds
+    even for train, since hints are approach-only).
+    """
+    from correction.provider import teacher_client_and_model
+    from harness.agent import _chat_with_retry
+
+    turns = _turns_of(task_or_question)
+    convo = "\n\n".join(f"{t['role'].upper()}: {t['content']}" for t in turns)
+    if client is None:
+        client, resolved = teacher_client_and_model()
+    else:
+        resolved = model or os.environ.get("TEACHER_MODEL") or "anthropic/claude-fable-5"
+    resp = _chat_with_retry(
+        client, model=resolved,
+        messages=[{"role": "system", "content": _HINT_SYSTEM},
+                  {"role": "user", "content": f"Problem (answer the final turn):\n{convo}"}],
+        temperature=0.0, max_tokens=700,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def answer_teacher_alone(task_or_question, *, client=None, model: str | None = None) -> str:
+    """A5 ceiling: the teacher solves the task directly (full answer)."""
+    from correction.provider import teacher_client_and_model
+    from harness.agent import _chat_with_retry
+
+    turns = _turns_of(task_or_question)
+    if client is None:
+        client, resolved = teacher_client_and_model()
+    else:
+        resolved = model or os.environ.get("TEACHER_MODEL") or "anthropic/claude-fable-5"
+    resp = _chat_with_retry(
+        client, model=resolved,
+        messages=[{"role": "system", "content": _SYSTEM}, *turns],
+        temperature=0.0, max_tokens=int(os.environ.get("TEACHER_MAX_TOKENS", "4000")),
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+_CRITIQUE = (
+    "Critique your own answer above against what an expert grader would want: what's "
+    "missing, wrong, or shallow? List the gaps, then STOP (do not rewrite yet)."
+)
+_REVISE = "Now produce an improved final answer addressing every gap you listed."
+
+
+def answer_with_retries(task_or_question, config) -> tuple[str, dict]:
+    """A2 compute-matched control: student answers, self-critiques, revises. No teacher.
+
+    Spends extra compute the 'dumb' way (its own reasoning) to match A4's hint overhead —
+    isolates 'teacher content' from 'more inference compute'.
+    """
+    turns = _turns_of(task_or_question)
+    base_msgs = _student_messages(turns, [])
+    a0 = _student_call(base_msgs, config.model)
+    crit_msgs = base_msgs + [{"role": "assistant", "content": a0},
+                             {"role": "user", "content": _CRITIQUE}]
+    crit = _student_call(crit_msgs, config.model, max_tokens=1500)
+    rev_msgs = crit_msgs + [{"role": "assistant", "content": crit},
+                            {"role": "user", "content": _REVISE}]
+    final = _student_call(rev_msgs, config.model)
+    return final, {"passes": 3, "critique_chars": len(crit)}
 
 
 def teacher_repair(tid: str, student_answer: str, *, client=None, model: str | None = None,

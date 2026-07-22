@@ -108,3 +108,22 @@ class TestMultiTurnAssembly:
         msgs = pr._student_messages(turns, [])
         assert "Category memory" not in msgs[0]["content"]
         assert msgs[1:] == turns
+
+
+class TestPlannerExecutor:
+    def test_hints_injected_as_guidance_not_answer_slot(self):
+        import adapters.prbench as pr
+        msgs = pr._student_messages([{"role": "user", "content": "q"}], [], hints="Use WACC; avoid double-counting.")
+        assert "Approach guidance" in msgs[0]["content"]
+        assert "Use WACC" in msgs[0]["content"]
+        assert msgs[-1]["content"] == "q"  # student still answers the real question
+
+    def test_hint_system_forbids_final_answer(self):
+        import adapters.prbench as pr
+        s = pr._HINT_SYSTEM.lower()
+        assert "300" in s and "do not state the final answer" in s
+
+    def test_no_hints_no_guidance_block(self):
+        import adapters.prbench as pr
+        msgs = pr._student_messages([{"role": "user", "content": "q"}], [])
+        assert "Approach guidance" not in msgs[0]["content"]
