@@ -56,6 +56,8 @@ def run(arm: str, tid: str, rep: int, model: str, mem, cache: dict) -> float | N
         ans, _ = pr.answer_with_refine(task, cfg)
     elif arm == "MEM":
         ans, _ = pr.generate_answer(task, cfg, memory=mem)
+    elif arm == "TEACHER":  # A5 ceiling: Fable answers the held-out task directly
+        ans = pr.answer_teacher_alone(task)
     else:
         raise ValueError(arm)
     g = pr.score_answer(tid, ans)

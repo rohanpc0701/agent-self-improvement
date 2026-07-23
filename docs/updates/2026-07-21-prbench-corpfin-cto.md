@@ -90,11 +90,20 @@ the price — a playbook for stock-consideration deals"*).
 
 ## 4. Results — 12 held-out tasks, k=3
 
-| Arm | Score | |
-|---|--:|---|
-| PLAIN — student alone | 71.9 | floor |
-| MEM — student + memory | 77.2 | the claim |
-| **Δ MEM − PLAIN** | **+5.3** | 8W / 2T / 2L |
+| Arm | Score | vs floor | |
+|---|--:|--:|---|
+| PLAIN — student alone | 71.9 | — | floor |
+| MEM — student + memory (gaps-only) | 77.2 | **+5.3** | the claim · 8W/2T/2L |
+| TEACHER — Fable alone | 90.5 | +18.6 | ceiling |
+
+**The ladder: floor 71.9 → +5.3 with memory → ceiling 90.5.** The student→teacher gap is
+**18.6 pts**; the gaps-only memory closes **28% of it** (5.3 / 18.6), no fine-tuning. Fable
+is a genuine ceiling — it beats the student on **11/12** tasks and the student never beats
+it, so this is not a weak-teacher artifact. Memory earns a real but **bounded** slice;
+~13 pts of headroom remain that in-context lessons alone don't reach (that headroom is the
+argument for the uplift gate and, eventually, the weights lever — §8).
+
+*(Two memory variants were tested — see §4a. The `MEM` row above is the better one.)*
 
 ### Per-task delta — memory helps most where the student was weakest
 
@@ -115,6 +124,24 @@ the price — a playbook for stock-consideration deals"*).
 
 The three biggest lifts (+12.9, +14.4, +11.0) land on tasks the student was
 middling-to-weak on. The two regressions are the story's honest edge (§6). A full worked example — one task through student, judge, teacher, and the distilled lesson — is in §5.
+
+### 4a. Which memory design — gaps-only vs three-way contrast (resolved)
+
+The token bug in §5.5 meant the first build distilled lessons from *(student answer + graded
+missed-criteria)* with an **empty** teacher answer. After fixing the budget (4k→12k) we
+re-ran the build so the teacher's real answer was included — a true three-way contrast — and
+re-scored held-out:
+
+| Memory design | Δ vs PLAIN | W/T/L | per-task sd |
+|---|--:|---|--:|
+| **v1 — gaps-only** (student answer + missed criteria) | **+5.3** | 8 / 2 / 2 | 6.4 |
+| v2 — three-way (+ teacher's full answer) | +2.5 | 7 / 0 / 5 | 7.4 |
+
+Adding the teacher's worked solution **did not help** — the point estimate dropped and
+regressions doubled (2→5). With n=12 and sd ~6–7 the 2.8-pt difference is within noise, so
+v2 is not *significantly* worse — but it is clearly **not better**, and simpler wins ties.
+**Decision: keep the gaps-only design.** The finding: the teacher doesn't need to *solve*
+the problem, only to *see where the student failed* — a cheaper, cleaner mechanism.
 
 ## 5. Worked example — one train task through all four roles
 
@@ -241,7 +268,8 @@ rewards.
 > distilled by Fable from *(problem + student answer + the graded missed-criteria)* — not
 > from a teacher gold answer. The mechanism that produced +5.3 is **"teacher reflects on
 > the student's graded gaps,"** not "teacher contrasts its own answer." Fixing the token
-> budget so the teacher-answer leg is non-empty is a clean next experiment.
+> budget so the teacher-answer leg is non-empty was run as a follow-up — and the gaps-only
+> lesson still won (§4a). So the empty leg was, if anything, a lucky simplification.
 >
 > **Code fix applied (2026-07-22).** The default `TEACHER_MAX_TOKENS` in
 > `adapters/prbench.py` was raised 4000 → **12000** (both `answer_teacher_alone` and
@@ -326,21 +354,26 @@ correction/prbench_judge.py              weighted-criteria judge + missed-criter
 
 ## 8. Bottom line & next
 
-**The mechanism works.** A stronger teacher, reading only the student's graded mistakes,
-wrote frozen prompt-memory that lifted a cheaper student +5.3 points on unseen expert
-finance tasks — no weight updates. The lift concentrates where the student was weakest,
-which is the behavior the design predicts.
+**The mechanism works, within bounds.** A stronger teacher, reading only the student's
+graded mistakes, wrote frozen prompt-memory that lifted a cheaper student +5.3 points on
+unseen expert finance tasks — no weight updates — closing **28% of the 18.6-pt gap** to the
+Fable ceiling (90.5). The lift concentrates where the student was weakest. Simpler memory
+(gaps-only) beat the richer three-way contrast (§4a). Two things are already settled: the
+token bug is fixed, and gaps-only is the design.
 
 To move from "promising signal" to "defensible claim," in priority order:
 
 1. **Paired bootstrap** over the 12 tasks → CI + p-value on the +5.3. (Fast; can run now.)
-2. **Turn the uplift gate on** — the two regressions are the argument for it. Gated memory
-   should keep the wins and drop the misleaders.
+2. **Turn the uplift gate on** — the two regressions are the argument for it, and ~13 pts of
+   ceiling headroom remain. Gated memory should keep the wins and drop the misleaders.
 3. **Add the compute-matched retry arm** so the claim is "beats equivalent inference
    spend," not just "beats nothing."
-4. **Fix the teacher token budget** (12k+) so the teacher-answer leg is non-empty, then
-   re-run the build — tests whether a true three-way contrast beats the gaps-only lesson.
-5. **Extend to the full 28 held-out** for power.
+4. **Extend to the full 28 held-out** for power.
+5. **The weights lever (LoRA)** if in-context memory plateaus well short of 90.5 — the
+   remaining headroom may need knowledge the prompt can't inject.
+
+*Resolved this cycle: teacher token budget fixed (4k→12k); three-way contrast tested and
+rejected in favor of gaps-only (§4a); Fable ceiling measured at 90.5.*
 
 ---
 
