@@ -1,19 +1,17 @@
 [project]
 name = "agent-self-improvement"
-version = "0.2.0"
-description = "Drift detection and self-improvement for AI agents"
+version = "0.3.0"
+description = "Teacher-built frozen memory for runtime self-improvement of reasoning models (no fine-tuning)"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
     "openai>=1.0",
     "networkx>=3.0",
 ]
 
 [tool.setuptools]
-packages = ["contracts", "harness", "detector", "correction", "viewer"]
+packages = ["contracts", "core", "adapters", "analysis", "harness", "correction"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["detector/tests", "harness/tests", "correction/tests", "viewer/tests", "tests"]
+testpaths = ["harness/tests", "correction/tests", "tests"]

@@ -38,3 +38,9 @@ Paired bootstrap for a CI → turn the uplift gate on (kills the regressions, ch
 headroom) → compute-matched retry arm → full 28 held-out → LoRA if ICL memory plateaus.
 
 Full detail in `docs/updates/2026-07-21-prbench-corpfin-cto.md` (§4, §4a, §5.5, §8).
+
+> **Correction notice (added 2026-07-25).** A code audit found that injection is capped at one
+> playbook, so the `+5.3` came from a **single** frozen lesson rather than ten; the per-cell scores
+> behind it have since been deleted (`runs/` is gitignored), so the CI named above cannot be computed
+> without re-running the eval; and "turn the uplift gate on" requires porting the gate to PRBench, not
+> flipping a flag. Full list: `docs/updates/2026-07-21-prbench-corpfin-cto.md` §Corrections.

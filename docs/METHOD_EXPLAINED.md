@@ -4,6 +4,13 @@ Plain walkthrough of exactly what "TraceLift on FinancePro" does. Three models,
 one loop. No fine-tuning — the student's weights never change; the only thing
 that changes is text added to its prompt.
 
+> **Scope (2026-07-25):** this describes the **FinancePro-Bench** track (Qwen student, GLM teacher),
+> which measured a clean null at k=3 (`FINDINGS_FINANCE.md` §H). The mechanism is the same one now
+> running on **PRBench Corporate Finance** with a DeepSeek student and Fable teacher — see
+> `updates/2026-07-21-prbench-corpfin-cto.md` for that track's numbers, and its §Corrections for the
+> places where the running code differs from the description (notably: injection is capped at one
+> playbook per query).
+
 ---
 
 ## The three models (roles)

@@ -1,6 +1,12 @@
 # RSI-Mem v2 — Runtime Self-Improvement on FinancePro-Bench
 
-**Version 2.1 · adopted 2026-07-20.** Supersedes `docs/RSI_MEM_PLAN.md` (v1, coding)
+> **Status (2026-07-25):** the *methodology* here — splits, judge gating, arm roster A1–A5, uplift
+> gate, kill criteria, variance protocol — is still the plan of record. The *benchmark* is not: after
+> FinancePro measured a clean null at k=3 (`FINDINGS_FINANCE.md` §H), the active track moved to
+> **PRBench Corporate Finance** (`updates/2026-07-21-prbench-corpfin-cto.md`). Escalation order lives
+> in `STRATEGY_LADDER.md`.
+
+**Version 2.1 · adopted 2026-07-20.** Supersedes `docs/archive/RSI_MEM_PLAN-v1-coding.md` (v1, coding)
 as the active track. v1 machinery carries over (per-item uplift audit, multi-seed
 eval runner + paired bootstrap, variance protocol). Dataset verified on HF:
 400 rows, fields {id, category, question, rubric}, rubrics contain R/T/B items,

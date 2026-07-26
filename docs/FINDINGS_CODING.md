@@ -2,9 +2,13 @@
 
 **Updated:** 2026-07-19
 **Scope:** everything measured on the coding adapter to date. Numbers are from
-real runs; nulls are reported as nulls. Sources: `docs/FABLE_HANDOFF.md` §6,
-`docs/superpowers/specs/2026-07-18-diagnostics-ablation-design.md` (results
+real runs; nulls are reported as nulls. Sources: `docs/archive/FABLE_HANDOFF-2026-07-19.md` §6,
+`docs/archive/superpowers/specs/2026-07-18-diagnostics-ablation-design.md` (results
 section), `runs/*.log`.
+
+> **Retired track.** The coding adapter was removed in `6935400`; this file is kept as the evidence
+> log for that era's nulls, which the strategy ladder still reasons from. Active track:
+> `updates/2026-07-21-prbench-corpfin-cto.md`.
 
 ## TL;DR
 

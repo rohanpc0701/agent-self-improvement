@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Finance TraceLift build loop — train failures → repair → distill → uplift gate.
 
-Pipeline (docs/superpowers/plans/2026-07-20-finance-tracelift.md Task C):
+Pipeline (docs/archive/superpowers/plans/2026-07-20-finance-tracelift.md Task C):
   1. Student on TRAIN-STREAM → collect low-score failures
   2. teacher_repair → distill_memory_item (playbook/trap/skeleton)
   3. Uplift-gate each candidate on VALIDATION (u in normalized pts; keep u > +1, K=2)

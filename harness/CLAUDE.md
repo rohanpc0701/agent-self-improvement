@@ -1,44 +1,50 @@
 # CLAUDE.md — harness/
 
-## What this stage does
-Runs the text-to-SQL agent over a Spider query stream and emits one `TelemetryRecord`
-per run. Owns the difficulty-shift feed and the execution-based eval. This is the SOURCE
-of the telemetry the whole loop watches.
+## What this dir is now
+The **student's transport layer**. `agent.py` owns every call the student model makes: client
+construction, retry/backoff, and the OpenRouter provider pin. Nothing here decides *what* to ask —
+prompt assembly lives in `adapters/`.
 
-## Contract — LOCKED (see /.claude/rules/01-contracts.md)
-- **Emits:** `TelemetryRecord` (one per run) -> appended to `events.jsonl` via `contracts.eventlog.append_event`.
-- **Reads:** `AgentConfig` — including `few_shot_examples`, which START EMPTY and GROW as
-  correction feeds learned examples back. You MUST use `config.few_shot_examples` when
-  prompting the agent — that's how recovery happens.
-- You are the source; you have no input mock. Your input is real Spider data.
+Everything else in this directory is retired Spider-era machinery (see `STRUCTURE.md`).
 
-## Locked decisions that constrain you
-- **Feed shape = change-point on a stratified stream** (rules/02): Phase 1 easy/med (high acc) ->
-  shift to hard/extra (acc drops) -> Phase 3 same hard questions (acc recovers after learning).
-  NOT random, NOT a gradual ramp.
-- **Pre-compute the stream and support fast replay** for the demo — don't pay live latency for
-  hundreds of calls. (Live-trigger the change-point; replay the rest.)
-- **Eval = execution accuracy**: run generated + gold SQL against the Spider SQLite DB, compare
-  RESULT SETS. Use Spider's eval logic for set comparison (row-order / duplicate normalization)
-  or you'll get false mismatches. Don't string-compare query text.
-- Base agent = weaker/faster Gemini tier (so it genuinely struggles on hard queries).
+## `agent.py` — what to know before touching it
 
-## What to build (files in this dir)
-- `spider.py`  — load a Spider subset: schemas, questions (pooled by difficulty), gold SQL, SQLite DBs.
-- `agent.py`   — text-to-SQL agent; prompt includes `config.few_shot_examples`; calls Gemini.
-- `evaluator.py` — execute generated + gold SQL, compare result sets -> accuracy + validity;
-                   compute generated/required complexity (joins+nesting).
-- `feed.py`    — the change-point stream sampler (phase -> difficulty pool); replay mode.
-- `runner.py`  — tie it together: for each item in the feed, run agent, eval, emit TelemetryRecord.
+- **`_chat_with_retry(client, **kwargs)`** is the single chokepoint for student, teacher, and judge
+  calls (`correction/prbench_judge.py` and `adapters/*` all route through it). Retries only
+  `408/429/5xx` + connection/timeout errors, exponential backoff with jitter, max 5 retries.
+- **Provider pin.** For the pinned slug (`OPENROUTER_PIN_MODEL`, default `deepseek/deepseek-v4-pro`)
+  it injects `provider: {order, allow_fallbacks: false, require_parameters: true}` into `extra_body`
+  on **every attempt** — so a caller that rebuilt `extra_body` (e.g. an empty-content retry) cannot
+  silently fall off the pin. Then `_assert_provider`:
+  - served by `order[0]` → silent OK,
+  - served by another provider in the allow-list → loud stderr warning + `provider_fallback_count()`,
+  - anything else, or no `provider` field on the response → `ProviderPinError`, never retried.
+  Report `provider_fallback_count()` with every result (`.claude/rules/02-tech-decisions.md`).
+- **`ProviderPinError` is not retryable.** Provider drift means the data is from a different serving
+  config; abort rather than continue.
+- **Fail fast on missing credentials** (`MissingCredentialsError`). Never emit placeholder/error
+  answers into a scored run — a fake answer becomes a real 0 in the mean.
+
+### Environment
+| Var | Effect |
+|---|---|
+| `OPENROUTER_API_KEY` (or `PRIME_API_KEY` / `MINIMAX_API_KEY`) | student credentials; picked by base URL |
+| `AGENT_BASE_URL` | defaults to MiniMax; set to `https://openrouter.ai/api/v1` for the live tracks |
+| `OPENROUTER_PIN_MODEL`, `OPENROUTER_PROVIDER_ORDER`, `OPENROUTER_PROVIDER_QUANT` | pin target, ordered allow-list (primary first), optional precision lock |
+| `STUDENT_MAX_TOKENS` | student generation cap (adapters default 6000) |
+| `AGENT_ENABLE_THINKING` | unset/`0` sends `reasoning: {enabled: false}` — some reasoning SKUs otherwise return empty `content` |
+| `AGENT_TIMEOUT_S` | per-request timeout |
+
+`agent._client` is a module-level cache; scripts set `agent._client = None` between arms so an env
+change (base URL, key) actually takes effect. Keep doing that.
+
+## Legacy in this dir
+- `feed.py` — `FeedItem` + the change-point stream sampler. The dataclass is still the input type for
+  `correction/tracelift.py` and `adapters/finance.run_item`; the sampler is unused.
+- `evaluator.py` — SQL execution-accuracy comparison. Imported only by `correction/learner.py`.
+- `tests/test_feed_and_eval.py` — pins the above.
+
+Don't extend these. A new benchmark implements `core.adapter.TaskAdapter` in `adapters/`.
 
 ## Build/run
-`python -m harness.runner`  (from repo root). Append records with `append_event(record)`.
-
----
-## FLEXIBLE — implementation notes
-
-- **Full demo run**: `python orchestrator.py --full --fresh`
-- **Models**: base `MiniMax-M2.7-highspeed`, teacher `MiniMax-M3` (correction). `MINIMAX_API_KEY` required.
-- **Spider**: `fixtures/prepare_spider.py` needs full dataset zip (DBs), not git clone alone. See `CLAUDE.local.md`.
-- **Agent**: `few_shot_examples` in prompt, same-`db_id` filter only. `reasoning` field captured for viewer.
-- **Session details**: see repo-root `CLAUDE.local.md` (gitignored).
+No entrypoint here. Experiments live in `scripts/`; see the repo-root `CLAUDE.md`.

@@ -1,40 +1,60 @@
 # CLAUDE.md — correction/
 
-## What this stage does
-On a `DriftEvent`, makes the agent LEARN from its own failures: collect the failing cases,
-get corrected SQL from a stronger teacher model, turn them into few-shot examples, and inject
-them so the agent recovers on the hard distribution — without forgetting easy-query skill.
-This is the continual-learning / memory heart of the project (your DER++ wheelhouse).
+## What this dir is now
+The **teacher and judge side** of the loop: grade an answer against a rubric, hand the teacher the
+graded gaps, and decide which resulting lesson is allowed into frozen memory.
 
-## Contract — LOCKED (see /.claude/rules/01-contracts.md)
-- **Consumes:** `DriftEvent` (carries `failing_run_ids` + `failure_mode`).
-- **Emits:** `CorrectionAction` with `new_few_shot_examples` -> appended to events.jsonl and to
-  the agent's `AgentConfig.few_shot_examples` (the harness uses them next).
-- **Build against:** `fixtures/mock_drift_events.jsonl` (+ make a small bundle of fake failing cases).
+Live modules: `prbench_judge.py`, `judge.py`, `provider.py`, `tracelift.py`. Everything else is
+retired drift-detection machinery (see `STRUCTURE.md`).
 
-## Locked decisions that constrain you
-- **LEARN FROM FAILURES — NOT model-swap** (rules/02). Do NOT "fix" drift by reverting to a bigger
-  model. The agent must end BETTER than it started on the hard distribution because it LEARNED.
-- **Teacher model** = stronger Gemini tier, used to GENERATE corrected SQL for failing questions
-  (a teacher, not a permanent swap). The base agent stays the agent; it just gains examples.
-- **Anchor against forgetting**: keep good easy-query examples too, so injecting hard-query
-  examples doesn't regress the easy bucket (this is the DER++/memory angle — make it real but
-  minimal first; sophistication only if time remains).
-- `failure_mode` tells you what to learn: VALID_BUT_WRONG -> logic/join examples; INVALID_SQL ->
-  structural/syntax examples.
+## `prbench_judge.py` — the scoring contract
+```
+positive criterion satisfied     → + weight
+detrimental criterion committed  → + weight (negative)
+raw = Σ applied weights ;  max = Σ positive weights
+score = clamp(raw, 0..max) / max × 100
+```
+- Judge prompt asks for exactly one `C<n>: yes|no` line per criterion, no prose, temp 0. The answer
+  is wrapped in `<answer>` tags and declared untrusted (prompt-injection guard) — keep that.
+- `grade()` asserts the judge slug ≠ `TEACHER_MODEL`. Never remove that assert.
+- `score_from_decisions` also returns **`missed`** = required-but-unsatisfied + detrimental-committed.
+  That list is the *only* thing the teacher gets to reason about when writing a lesson (gaps-only).
+- **Known sharp edge:** a *partial* parse is accepted (repair-retry fires only when zero decisions
+  parse), and unparsed criteria count as unsatisfied → a deflated score. `n_decided` is returned but
+  not checked. Fixing this means deciding what to do with a partially graded cell — don't paper over it.
 
-## What to build (files in this dir)
-- `teacher.py`     — given a failing (question, schema), get correct SQL from the teacher model.
-- `learner.py`     — build & anchor FewShotExamples from failures (anti-forgetting memory).
-- `correction.py`  — DriftEvent + failing cases -> CorrectionAction (the learned examples).
+`judge.py` is the FinancePro equivalent (`Item R*(max N)` rubric format, `JUDGE_PASSES` averaging,
+repair-retry on a missing `TOTAL`).
 
-## Minimal honest version (if behind at hr 8)
-Collect failing questions -> teacher generates correct SQL ONCE -> add as few-shots -> done.
-Still non-circular, still shows the agent improving. Add anchoring/DER++ rigor only if time allows.
+## `provider.py` — teacher client
+Resolution order: explicit `TEACHER_BASE_URL` + `TEACHER_API_KEY` → OpenRouter
+(`TEACHER_USE_OPENROUTER=1`) → Prime (`TEACHER_USE_PRIME=1`) → MiniMax. Raises if nothing resolves.
+The live tracks use OpenRouter for all three roles.
+
+**Reasoning-teacher trap:** hidden reasoning tokens count against `max_tokens`, so a small cap
+returns `finish_reason=length` with **empty content and no error**. `adapters/prbench.py` defaults
+`TEACHER_MAX_TOKENS` to 12000 and routes teacher calls through `_teacher_text()`, which warns loudly
+on empty content. Any new teacher call must do the same.
+
+## `tracelift.py` — the uplift gate
+A candidate lesson is admitted only if it measurably helps the **frozen** student on a validation
+slice: `u = mean(score | candidate) − mean(score | no memory)` over `val_items × k`, keep `u > min_u`,
+rank by `u`, cap the store. This is the mechanism the whole method rests on — "ungated" results are a
+weaker claim and must be labelled as such.
+
+Current state: the gate takes an adapter with `run_item(item, config)` returning a record with
+`execution_accuracy`. `adapters/finance.py` implements that; **`adapters/prbench.py` does not**, and
+`scripts/finance_tracelift.py` carries its own judge-scored gate. So "turn the gate on for PRBench"
+is new plumbing, not a flag.
+
+## Legacy in this dir
+`graph.py` + `store.py` (knowledge-graph `(trap, fix)` rules), `inject.py` (still imported by
+`harness/agent.py`), `learner.py` + `teacher.py` (SQL-era few-shots and anchoring), `correction.py`,
+`on_drift.py`, `memory.py`, `repair.py`, `distill.py`, `contracts.py`. Tests in `correction/tests/`
+pin them. Don't build new work on these; don't delete them as a drive-by.
 
 ## Build/run
-`python -m correction.correction --drift fixtures/mock_drift_events.jsonl`
-
----
-## FLEXIBLE — implementation notes
-<!-- anchoring strategy, how many examples, teacher prompt, forgetting metric... -->
+```bash
+make test                                    # includes correction/tests
+python scripts/prbench_build_memory.py --n-train 12    # judge + teacher, live
+```
