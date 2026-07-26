@@ -377,6 +377,63 @@ rejected in favor of gaps-only (§4a); Fable ceiling measured at 90.5.*
 
 ---
 
+## Corrections — added 2026-07-25 (code audit)
+
+*The memo above is left as written on 2026-07-21; this section records where it does not match the
+code as committed. Two items change how the result should be described.*
+
+1. **"We injected all 10 lessons unconditionally" (§6) is wrong — one lesson reached the prompt.**
+   `adapters/prbench._student_messages` calls `adapters.finance.select_category_memory`, which caps
+   injection at **1 playbook + ≤2 traps + ≤1 skeleton**. `scripts/prbench_build_memory.py` tags every
+   frozen lesson `[FINANCE_PLAYBOOK]`, so all items classify as playbooks and only the **first** is
+   injected. Verified by replaying the frozen store through the selector. That cap predates this run
+   (`714a…`, and `9b09e92` for the PRBench path), so it was in force during the eval.
+   - Consequence for the claim: the `+5.3` came from **one** ~1000-character lesson, not ten. That is
+     arguably a *stronger* result per token, but it is a different mechanism than described.
+   - Consequence for §6's regression explanation: "the same 10 lessons hit every question" cannot be
+     the cause of the two regressions, because 9 of them were never in the prompt.
+   - `generate_answer`'s `examples_injected` stat reports `len(mem[:4])`, so run logs disagree with
+     what was actually injected.
+2. **The per-cell scores behind `+5.3` no longer exist.** `runs/prbench_memory_scores.jsonl` (72
+   cells) is absent from disk, and `runs/` is gitignored, so nothing in version control reproduces the
+   table. `runs/prbench_memory.json` now contains **2** lessons (overwritten by a later build), and
+   `runs/prbench_memory_build.jsonl` has 2 rows. §7 lists these as artifacts; they are not recoverable
+   from the repo. The paired bootstrap named as "next step 1 (fast; can run now)" therefore cannot be
+   run on this data — `analysis/bootstrap.paired_bootstrap` exists and is tested, but its inputs are
+   gone. **Re-running the 12×3 eval is now a prerequisite for any CI on this number.**
+3. **The delta arithmetic in the eval script is unpaired.** `scripts/prbench_memory_eval.py:113`
+   computes `mean(per['MEM'][:n]) − mean(per['PLAIN'][:n])` over positionally-truncated lists. If a
+   task fails in one arm, the lists shift and task *i* is compared with task *j*. Same pattern in
+   `scripts/prbench_planner_eval.py:139`. The per-task table in §4 looks correctly paired, so this
+   likely did not corrupt the headline — but the script cannot be trusted to reproduce it. Compute Δ
+   per task, then average.
+4. **19 detrimental rubric criteria are stored with positive weight.**
+   `scripts/prepare_prbench.py::_criterion` takes the first non-`None` weight field, and the positive
+   fields are checked first, so a criterion carrying both loses its sign. Effect: the judge *rewards*
+   committing those traps and they inflate `max`. Only 1 of the 19 falls inside the 12 evaluated
+   held-out tasks, so the headline is barely affected — but the trap-registry diagnostic the plan
+   calls its highest-value artifact is currently unreliable.
+5. **The judge sees only the final turn.** `score_answer` passes `task["question"]` (= `final_prompt`)
+   to the judge, while the student answers the full conversation. **7 of the 12** evaluated held-out
+   tasks are multi-turn (34 of 93 overall), so criteria referring to earlier turns are graded without
+   that context. This applies equally to every arm, so it inflates variance rather than biasing Δ.
+6. **"Turn the uplift gate on" (§8, item 2) is new code, not a flag.** `correction/tracelift.py`
+   requires an adapter with `run_item()` returning binary `execution_accuracy`; `adapters/prbench.py`
+   implements no such method, and the finance gate in `scripts/finance_tracelift.py` is judge-scored
+   and finance-specific. Gating PRBench means porting the gate to rubric scores against the 15-task
+   validation split.
+7. **Provider-pin defaults differ from the run.** `harness/agent._provider_order()` defaults to
+   `"fireworks"` only, so the Together fallback reported in §7 required
+   `OPENROUTER_PROVIDER_ORDER=fireworks,together` in the run environment — with the repo default, that
+   request would have raised `ProviderPinError` instead of warning. The run env was not recorded.
+
+**Net effect on the headline.** Items 1 and 2 change *what* was measured and *whether* it can be
+re-checked; items 3–7 are mostly forward-looking hygiene. The honest one-line statement is now:
+*"a single frozen, teacher-written lesson lifted the student +5.3 on 12 held-out tasks (k=3, ungated,
+no CI), on a run whose per-cell data has since been lost."*
+
+---
+
 *Student deepseek/deepseek-v4-pro (Fireworks-pinned) · Teacher anthropic/claude-fable-5 ·
 Judge openai/gpt-5.2 · all OpenRouter. PRBench Corporate Finance · 12 held-out × k=3 ·
-ungated · 1 provider fallback · generated 2026-07-21.*
+ungated · 1 provider fallback · generated 2026-07-21 · corrections appended 2026-07-25.*

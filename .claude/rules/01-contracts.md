@@ -1,24 +1,31 @@
 # LOCKED RULE: Data contracts (canonical names + legacy aliases)
 
-**`contracts/schemas.py` is the single shared dependency of all four stages.**
+**`contracts/schemas.py` is the shared dependency. Do not redefine record shapes locally.**
 
-Canonical field names are **domain-agnostic** (`generated_output`, `correct_output`,
-`domain_id`, `invalid_output`). Legacy SQL-shaped keys (`generated_sql`, `correct_sql`,
-`db_id`, `invalid_sql`) remain accepted on **input** via Pydantic validation aliases so
-historical `events.jsonl` and fixtures still load.
+Canonical field names are **domain-agnostic** (`generated_output`, `correct_output`, `domain_id`).
+Legacy SQL-shaped keys (`generated_sql`, `correct_sql`, `db_id`) are still accepted on **input** via
+Pydantic validation aliases so historical fixtures and logs load. Prefer canonical names in new code.
+If a field must change: announce, change once, re-pull.
 
-- Prefer the canonical names in new code.
-- Do not redefine record shapes locally — import from `contracts.schemas`.
-- If a field must change again: announce, change once, everyone re-pulls.
+## The record that matters now
+`FewShotExample` — **one memory item**. Every field is load-bearing:
 
-## The records
-- `AgentConfig` — `few_shot_examples` starts empty and grows via correction.
-- `TelemetryRecord` — one agent run (channels + question/output for the viewer).
-- `DriftEvent` — windowed drift + `failure_mode` + `failing_run_ids`.
-- `CorrectionAction` — `new_few_shot_examples` the agent should learn from.
+| Field | Meaning on the live path |
+|---|---|
+| `question` | the item's **header**, not a question: `[FINANCE_PLAYBOOK] <category>` (or `[FINANCE_TRAP]` / `[FINANCE_SKELETON]`). `memory_kind_of()` parses this prefix, and `select_category_memory()` uses the kind to decide what gets injected. Change the prefix and retrieval silently changes. |
+| `correct_output` | the lesson body (entity-scrubbed, token-trimmed) |
+| `domain_id` | the retrieval key — the benchmark **category** (e.g. `Corporate Finance`), not a database id |
+| `source` | provenance: `teacher` \| `tracelift` \| `uplift` \| `gold` \| `anchor` |
 
-## Why `difficulty` is on every record
-Stratifying accuracy by difficulty makes the improvement claim defensible.
+`AgentConfig` — `model` + `few_shot_examples`. The memory list is passed explicitly to
+`generate_answer(..., memory=...)` on the eval path; `config.few_shot_examples` is the fallback.
 
-## Event log helper
-Use `contracts/eventlog.py` (`append_event`, `read_events`, `tail_events`).
+## Records kept for the retired drift-detection era
+`TelemetryRecord`, `DriftEvent`, `CorrectionAction`, `Difficulty`, `FailureMode` and
+`contracts/eventlog.py` (`append_event`, `read_events`, `tail_events`) are **not on the live path**.
+They still load historical `events.jsonl` and are imported by legacy modules and their tests. Leave
+them alone; don't build new work on them.
+
+## Rubric text is not a contract field
+Rubrics live in the dataset fixtures and are reached only through `rubric_for(qid, role=...)`.
+Never pass a rubric into a schema object, a memory item, or a student prompt (rules/00).
