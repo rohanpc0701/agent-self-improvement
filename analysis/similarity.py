@@ -49,3 +49,15 @@ def pairwise_max(targets: dict[str, str], sources: dict[str, str]) -> dict[str, 
         t: max((cosine(vecs[t], vecs[s]) for s in sources), default=0.0)
         for t in targets
     }
+
+
+def pair_cosine(text_a: str, text_b: str, background: dict[str, str]) -> float:
+    """Cosine between two texts with IDF from a larger background pool.
+
+    A 2-document pool is degenerate: every shared word has df == n and drops out of
+    both vectors, forcing cosine to 0 regardless of real similarity. Callers must
+    supply a background corpus (e.g. all benchmark questions) for meaningful IDF.
+    """
+    pool = {**background, "__a__": text_a, "__b__": text_b}
+    vecs = tfidf_vectors(pool)
+    return cosine(vecs["__a__"], vecs["__b__"])

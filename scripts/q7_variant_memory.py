@@ -26,12 +26,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+
+def _load_env() -> None:
+    """Load ROOT/.env (existing env wins). The teacher-client resolution reads
+    OPENROUTER_API_KEY from the environment; without this, resolution silently
+    falls through to whatever key IS present (observed: MiniMax, which does not
+    serve glm-5.2)."""
+    env = ROOT / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip())
+
+
+_load_env()
+# Force the teacher onto OpenRouter regardless of stray shell credentials.
+os.environ["TEACHER_USE_OPENROUTER"] = "1"
+os.environ.pop("TEACHER_BASE_URL", None)
+os.environ.pop("TEACHER_API_KEY", None)
+
 from adapters.finance import (  # noqa: E402
     generate_answer,
     get_problem,
     load_manifest,
 )
-from analysis.similarity import pairwise_max, tfidf_vectors, cosine  # noqa: E402
+from analysis.similarity import pair_cosine, pairwise_max  # noqa: E402
 from contracts.schemas import AgentConfig, FewShotExample  # noqa: E402
 from correction.judge import grade, rubric_max_points  # noqa: E402
 
@@ -111,6 +132,17 @@ def reconstruct_provenance() -> dict[str, list[dict]]:
     return mapping
 
 
+def _background() -> list[dict]:
+    """IDF background pool: all benchmark questions (cached)."""
+    from adapters.finance import load_finance_questions
+    global _BG
+    try:
+        return _BG
+    except NameError:
+        _BG = load_finance_questions()
+        return _BG
+
+
 # ── variant generation (blind — asserted) ─────────────────────────────────────
 _VARIANT_SYS = (
     "You write exam-quality variant questions for expert finance benchmarks. Given a source "
@@ -118,7 +150,8 @@ _VARIANT_SYS = (
     "and SAME governing standards, but different company names, numbers, dates, and surface "
     "framing. The variant rubric must keep the exact same 'Item R<n>(max <m>)' structure and "
     "the same point maxima, with numeric expectations recomputed for the new numbers.\n"
-    "Return STRICT JSON: {\"question\": \"...\", \"rubric\": \"...\"} and nothing else."
+    "Return EXACTLY this delimited format (no JSON, no code fences):\n"
+    "=== VARIANT QUESTION ===\n<the variant question>\n=== VARIANT RUBRIC ===\n<the variant rubric>\n=== END ==="
 )
 
 
@@ -153,25 +186,35 @@ def generate_variant(qid: str, state: dict, idx: int = 0) -> dict | None:
     resp = _chat_with_retry(client, model=model,
                             messages=[{"role": "system", "content": _VARIANT_SYS},
                                       {"role": "user", "content": prompt}],
-                            temperature=0.3, max_tokens=6000)
+                            temperature=0.3, max_tokens=int(os.environ.get('Q7_VARIANT_MAX_TOKENS', '16000')))
     _track(model, getattr(resp, "usage", None))
     raw = (resp.choices[0].message.content or "").strip()
-    raw = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
     row = {"key": key, "qid": qid, "ok": False}
+    if not raw:
+        row["error"] = "empty teacher content (reasoning-token exhaustion — raise Q7_VARIANT_MAX_TOKENS)"
+        _put(row); state[key] = row
+        return row
     try:
-        v = json.loads(raw)
-        vq, vr = v["question"].strip(), v["rubric"].strip()
+        # Delimited format: JSON forced GLM to embed multi-line rubrics in quoted
+        # strings, which it emits with literal newlines -> unterminated-string errors
+        # on 3/3 attempts. Delimiters have no escaping problem.
+        m = re.search(r"=== VARIANT QUESTION ===\s*(.*?)\s*=== VARIANT RUBRIC ===\s*(.*?)\s*(?:=== END ===|\Z)",
+                      raw, flags=re.DOTALL)
+        if not m:
+            raise KeyError("delimiters not found")
+        vq, vr = m.group(1).strip(), m.group(2).strip()
         # rubric must parse and preserve the max-point total
         src_max, var_max = rubric_max_points(p["rubric"]), rubric_max_points(vr)
         if abs(src_max - var_max) > 1e-6:
             row["error"] = f"max points {var_max} != source {src_max}"
         else:
-            sim = cosine(*(lambda V: (V["a"], V["b"]))(tfidf_vectors({"a": vq, "b": p["question"]})))
+            bg = {q["id"]: q["question"] for q in _background()}
+            sim = pair_cosine(vq, p["question"], bg)
             row.update(ok=COSINE_LO <= sim <= COSINE_HI, question=vq, rubric=vr,
                        cosine_to_source=round(sim, 4), category=p["category"])
             if not row["ok"]:
                 row["error"] = f"cosine {sim:.3f} outside [{COSINE_LO},{COSINE_HI}]"
-    except (json.JSONDecodeError, KeyError) as e:
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
         row["error"] = f"parse: {e}"
     _put(row)
     state[key] = row

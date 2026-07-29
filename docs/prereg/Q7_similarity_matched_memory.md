@@ -86,3 +86,25 @@ narrated.
 2. The "same embedding method used for the 0.14 figure" existed in no repo; it is defined by
    `analysis/similarity.py` in this commit and used for all Q7 similarity numbers.
 3. Store lacks source-task ids; reconstruction-from-log with declared fallback (above).
+
+---
+
+## PARKED — 2026-07-28, before pilot, ~$0.60 spent
+
+Decision (Rohan): Q7's best-case outcome — frozen memory helps on near-duplicate questions —
+is **dominated by plan-caching on the mechanism that already won**: for recurring questions,
+cache the teacher's per-task plan (HINT, +6.0 significant on the Prime grid) and re-inject it
+on lookalikes. Same recurrence benefit, no distillation, no gate, built on a proven effect.
+An experiment whose best case is second place does not justify its construction cost — and the
+samples phase confirmed variant generation is the fiddly part (3/3 rejected by the validation
+harness for three different reasons: cosine 0.96 too-close; rubric total rewritten 100→10;
+rubric format dropped).
+
+State at parking: prereg + build committed; provenance reconstruction verified (10/10 store
+items → 5 sources); validation harness working as designed; resumable from
+`runs/q7/state.json` if ever revived. No held-out question was touched. The memory line's
+standing verdict (null in 4 delivery forms, 2 platforms) is unchanged; its recurrence variant
+is *untested-and-parked*, not disproven.
+
+Successor question: the **plan-caching probe** — does a cached teacher plan retain its +6 when
+re-used on paraphrased/recurring questions? Uses the winning mechanism directly.
