@@ -46,9 +46,32 @@ _assert_judge_ne_teacher(JUDGE_MODEL, TEACHER_MODEL)
 _PRIME_BASE = "https://api.pinference.ai/api/v1"
 
 _R_LINE = re.compile(
-    r"^R(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)\s*[—\-–:]\s*(.*)$",
+    # Many rubrics instruct `R<n>: <pts> / <max> — evidence`; the optional
+    # `/ <max>` group made every such line unparseable, silently emptying items.
+    r"^R(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)\s*(?:/\s*\d+(?:\.\d+)?\s*)?[—\-–:]\s*(.*)$",
     re.IGNORECASE | re.MULTILINE,
 )
+# Rubrics declare the basis they tell the judge to report TOTAL on (`MAX: 100` in
+# 38 of 40 Q1 rubrics) while the item ladder sums to 70–92; normalizing TOTAL by the
+# ladder sum over-scaled 30 of 40 questions by 1.06–1.35x.
+#
+# Read from the RUBRIC, never from the judge's output: an output-derived denominator
+# would differ between units of the same question depending on whether the judge
+# happened to print the line, i.e. vary with output completeness — which is exactly
+# the answer-length-correlated bias this fix exists to remove.
+_RUBRIC_MAX_LINE = re.compile(
+    r"^\s*[-*]?\s*(?:followed by a line exactly:\s*`?)?\*{0,2}MAX\*{0,2}\s*:\s*(\d+(?:\.\d+)?)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def rubric_declared_max(rubric: str) -> float | None:
+    """The scoring basis the rubric instructs the judge to report TOTAL on, if any."""
+    m = _RUBRIC_MAX_LINE.search(rubric or "")
+    if m:
+        val = float(m.group(1))
+        return val if val > 0 else None
+    return None
 _TRAP_LINE = re.compile(
     r"^trap\s+T(\d+)\s*:\s*[−\-–]?\s*([+]?\d+(?:\.\d+)?)",
     re.IGNORECASE | re.MULTILINE,
@@ -104,15 +127,15 @@ def parse_judge_output(raw: str, *, max_points: float) -> dict[str, Any]:
         bonus_points += float(m.group(2))
 
     total_m = _TOTAL_LINE.search(text)
-    if total_m:
-        total = float(total_m.group(1))
-    elif items:
-        # Deterministic fallback: reconstruct the total from the item breakdown
-        # so a gradeable response is never discarded over a missing summary line
-        # (gpt-5.2 intermittently omits TOTAL). total = ΣR − ΣT + ΣB.
-        total = sum(items.values()) - trap_penalty + bonus_points
-    else:
-        raise JudgeParseError("missing TOTAL line and no scorable R items")
+    if not total_m:
+        # No reconstruct-from-items fallback: a truncated grade (judge cut off at
+        # max_tokens) yields a PARTIAL item list, and summing it silently deflates
+        # the score — worse, deflation scales with answer length, so it biases
+        # whichever arm writes longer answers. An error retries; a wrong number lies.
+        raise JudgeParseError(
+            f"missing TOTAL line (parsed {len(items)} R items; likely truncated output)"
+        )
+    total = float(total_m.group(1))
 
     if max_points <= 0:
         raise JudgeParseError(f"invalid max_points={max_points}")
@@ -128,6 +151,14 @@ def parse_judge_output(raw: str, *, max_points: float) -> dict[str, Any]:
         "bonuses": bonuses,
         "raw": raw,
     }
+
+
+def _judge_max_tokens() -> int:
+    raw = (os.environ.get("JUDGE_MAX_TOKENS") or "8192").strip()
+    try:
+        return max(4096, int(raw))
+    except ValueError:
+        return 8192
 
 
 def _judge_client() -> OpenAI:
@@ -224,7 +255,11 @@ def _one_pass(
         model=model,
         messages=messages,
         temperature=0.0,
-        max_tokens=2048,
+        max_tokens=_judge_max_tokens(),
+        # gpt-5.2 spent ~75% of a 2048 budget on hidden reasoning, so grades were
+        # cut off before TOTAL (finish_reason='length'). Off, a full grade needs
+        # ~450 tokens. Belt and braces with the larger budget above.
+        extra_body={"reasoning": {"enabled": False}},
     )
     raw = _message_text(resp)
     try:
@@ -248,7 +283,7 @@ def _one_pass(
                     ),
                 },
             ]
-            max_tok = 3072
+            max_tok = max(3072, _judge_max_tokens())
         else:
             repair = messages + [
                 {"role": "assistant", "content": raw},
@@ -263,13 +298,16 @@ def _one_pass(
                     ),
                 },
             ]
-            max_tok = 2048
+            # Escalate: a length-truncated first pass truncates identically if the
+            # retry reuses the same budget.
+            max_tok = _judge_max_tokens() * 2
         resp2 = _chat_with_retry(
             client,
             model=model,
             messages=repair,
             temperature=0.0,
             max_tokens=max_tok,
+            extra_body={"reasoning": {"enabled": False}},
         )
         raw2 = _message_text(resp2)
         return parse_judge_output(raw2, max_points=max_points)
@@ -288,7 +326,13 @@ def grade(
     n_pass = JUDGE_PASSES if passes is None else int(passes)
     if n_pass < 1:
         raise ValueError("passes must be >= 1")
+    # rubric_max_points() still gates gradability (it raises on rubrics with no
+    # parseable item ladder); the declared basis, when the rubric states one, is
+    # what the judge was told to scale TOTAL to.
     max_points = rubric_max_points(rubric)
+    declared = rubric_declared_max(rubric)
+    if declared:
+        max_points = declared
     results = [
         _one_pass(question, rubric, answer, model, max_points) for _ in range(n_pass)
     ]
