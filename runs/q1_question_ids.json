@@ -1,0 +1,70 @@
+{
+ "seed": 42,
+ "n": 40,
+ "pilot_ids": [
+  "fpb-00053",
+  "fpb-00002",
+  "fpb-00003",
+  "fpb-00073",
+  "fpb-00005",
+  "fpb-00103",
+  "fpb-00123",
+  "fpb-00133"
+ ],
+ "question_ids": [
+  "fpb-00053",
+  "fpb-00002",
+  "fpb-00003",
+  "fpb-00073",
+  "fpb-00005",
+  "fpb-00103",
+  "fpb-00123",
+  "fpb-00133",
+  "fpb-00201",
+  "fpb-00156",
+  "fpb-00214",
+  "fpb-00218",
+  "fpb-00225",
+  "fpb-00251",
+  "fpb-00231",
+  "fpb-00260",
+  "fpb-00280",
+  "fpb-00297",
+  "fpb-00314",
+  "fpb-00332",
+  "fpb-00353",
+  "fpb-00379",
+  "fpb-00025",
+  "fpb-00398",
+  "fpb-00032",
+  "fpb-00057",
+  "fpb-00070",
+  "fpb-00080",
+  "fpb-00088",
+  "fpb-00115",
+  "fpb-00119",
+  "fpb-00134",
+  "fpb-00207",
+  "fpb-00149",
+  "fpb-00013",
+  "fpb-00253",
+  "fpb-00016",
+  "fpb-00266",
+  "fpb-00020",
+  "fpb-00302"
+ ],
+ "excluded_unscoreable": [
+  {
+   "id": "fpb-00262",
+   "reason": "rubric has no Item R*(max N) declarations"
+  },
+  {
+   "id": "fpb-00031",
+   "reason": "rubric has no Item R*(max N) declarations"
+  },
+  {
+   "id": "fpb-00208",
+   "reason": "rubric has no Item R*(max N) declarations"
+  }
+ ]
+}

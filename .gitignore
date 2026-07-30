@@ -18,7 +18,11 @@ correction/graph_store.json
 # Import / ablation intermediates (do not commit)
 fixtures/imported_candidates.json
 fixtures/coding_subset.backup.json
-runs/
+runs/*
+# Q1 prereg artifacts must stay recomputable (reasoning-rsi lesson)
+!runs/q1_question_ids.json
+!runs/q1_state.json
+!runs/q1_summary.json
 # probe resume log (intermediate); final fixture+manifest are committed
 # runs/probe_results.jsonl lives under runs/
 .venv-alfworld/
