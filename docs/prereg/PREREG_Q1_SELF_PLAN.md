@@ -168,6 +168,27 @@ config stamp, so a future mid-run deviation could silently mix configurations.
   switch. They are byte-identical across archives and derived from question text only, so the
   teacher path never touched the student stack — but a skeptic may ask for regeneration.
 
+**D4 — 2026-07-30, teacher plan budget 12000 → 32000 tokens (mid-run, protocol-neutral).**
+Shard 3 hard-exited on the empty-teacher-content guard while building the plan for
+fpb-00134. Diagnosis (single probe, measured): GLM spent **10,924 of its 12,000-token budget
+on hidden reasoning**, returned `finish_reason='length'` with **0 characters of content** and
+42,640 characters of reasoning. Same failure class as the D2 judge bug and the earlier
+teacher-empty bug — a reasoning model sharing one budget between reasoning and content — just
+at a higher threshold. Deterministic for this question, not transient.
+
+Raised via `TEACHER_MAX_TOKENS=32000`; no harness code changed.
+
+**Why this is protocol-neutral and therefore safe mid-run:** a cap only truncates. Every plan
+already generated fit inside 12,000 and is byte-identical at any higher cap, so no existing
+arm-C treatment changes. The cap only affects questions where the plan previously could not be
+produced at all (hard exit, zero data). Contrast with a prompt or model change, which would
+alter plans that already succeeded — that is the mixed-instrumentation confound D1 fences off,
+and it is not what this is.
+
+Alternative considered and rejected: excluding fpb-00134 (and any sibling failures) would cut
+n below 40 and bias the sample toward questions GLM finds easy to plan — a worse defect than
+a cap change that leaves existing data untouched.
+
 ## Declared limitations (written now)
 - Single stack (OpenRouter, provider-pinned). Any positive is scoped until Q2.
 - n=40 resolves ~+/-4-5 points at this protocol; recovery ratio inherits
