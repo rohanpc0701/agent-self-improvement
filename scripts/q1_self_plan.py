@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import random
+import re
 import statistics
 import subprocess
 import sys
@@ -35,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 RUNS = ROOT / "runs"
 STATE_PATH = RUNS / "q1_state.json"
 IDS_PATH = RUNS / "q1_question_ids.json"
+ANSWER_MAX_TOKENS = 8192  # 2048 truncated 55/72 pilot answers, skewed against B/C
 PREREG = ROOT / "docs" / "prereg" / "PREREG_Q1_SELF_PLAN.md"
 
 EXPECTED_TEACHER = "z-ai/glm-5.2"
@@ -140,17 +142,31 @@ def assert_preregistered(*, need_ids: bool) -> None:
 
 # ---------- state (single JSON, atomic, per-sub-call checkpoints) ----------
 
-def load_state() -> dict:
-    if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text())
+def _state_path(shard: int | None) -> Path:
+    return STATE_PATH if shard is None else RUNS / f"q1_state_shard{shard}.json"
+
+
+def load_state(path: Path = STATE_PATH) -> dict:
+    if path.exists():
+        return json.loads(path.read_text())
     return {"teacher_plans": {}, "units": {}}
 
 
-def save_state(state: dict) -> None:
+def load_merged_state() -> dict:
+    """Merge the legacy state with all shard states (disjoint questions per shard)."""
+    merged = {"teacher_plans": {}, "units": {}}
+    for path in [STATE_PATH, *sorted(RUNS.glob("q1_state_shard*.json"))]:
+        s = load_state(path)
+        merged["teacher_plans"].update(s["teacher_plans"])
+        merged["units"].update(s["units"])
+    return merged
+
+
+def save_state(state: dict, path: Path = STATE_PATH) -> None:
     RUNS.mkdir(exist_ok=True)
-    tmp = STATE_PATH.with_suffix(".json.tmp")
+    tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1))
-    os.replace(tmp, STATE_PATH)
+    os.replace(tmp, path)
 
 
 def _key(qid: str, arm: str, rep: int) -> str:
@@ -245,7 +261,7 @@ def cmd_draw() -> None:
     print("[draw] COMMIT runs/q1_question_ids.json before `run`")
 
 
-def cmd_run(pilot: bool) -> None:
+def cmd_run(pilot: bool, shard: int | None = None, nshards: int = 1) -> None:
     from adapters.finance import get_problem
     from correction.judge import grade
 
@@ -253,7 +269,15 @@ def cmd_run(pilot: bool) -> None:
     assert_preregistered(need_ids=True)
     ids_doc = json.loads(IDS_PATH.read_text())
     ids = ids_doc["pilot_ids"] if pilot else ids_doc["question_ids"]
-    state = load_state()
+    if shard is not None:
+        ids = ids[shard::nshards]
+    spath = _state_path(shard)
+    state = load_state(spath)
+    # Teacher plans already built (e.g. by the pilot) are cap-independent; seed them.
+    if not state["teacher_plans"]:
+        state["teacher_plans"].update(
+            {q: p for q, p in load_merged_state()["teacher_plans"].items() if q in ids}
+        )
     units = state["units"]
     total = len(ids) * len(ARMS) * K_REPS
     done = sum(1 for k, u in units.items() if u.get("grade") and k.split("|")[0] in ids)
@@ -265,7 +289,7 @@ def cmd_run(pilot: bool) -> None:
         # Teacher plan cached once per question (temp 0).
         if qid not in state["teacher_plans"]:
             state["teacher_plans"][qid] = _word_trim(teacher_plan(p["question"]))
-            save_state(state)
+            save_state(state, spath)
             print(f"  [plan] {qid} teacher plan ok", flush=True)
         for arm in ARMS:
             for rep in range(K_REPS):
@@ -287,24 +311,24 @@ def cmd_run(pilot: bool) -> None:
                         if not pre.strip():
                             raise RuntimeError("empty preamble — malformed unit")
                         unit["preamble"] = pre
-                        save_state(state)
+                        save_state(state, spath)
                     if not unit.get("answer"):
                         # Preamble must exist before the answer call (checklist §1).
                         assert unit["preamble"].strip(), "empty preamble before answer"
                         unit["answer"] = student_chat(
                             ANSWER_PROMPT.format(q=p["question"], preamble=unit["preamble"]),
-                            max_tokens=2048)
-                        save_state(state)
+                            max_tokens=ANSWER_MAX_TOKENS)
+                        save_state(state, spath)
                     unit["grade"] = grade(question=p["question"], rubric=p["rubric"],
                                           answer=unit["answer"], passes=JUDGE_PASSES)
                     unit["ts"] = time.time()
-                    save_state(state)
+                    save_state(state, spath)
                     print(f"  [unit] {key} ok", flush=True)  # no scores printed: no peeking
                 except (KeyboardInterrupt, SystemExit):
                     raise
                 except Exception as exc:
                     unit["error"] = str(exc)
-                    save_state(state)
+                    save_state(state, spath)
                     print(f"  [unit] {key} FAILED ({exc})", flush=True)
                     low = str(exc).lower()
                     if any(t in low for t in ("insufficient", "401", "403")):
@@ -316,7 +340,7 @@ def cmd_run(pilot: bool) -> None:
 
 def cmd_pilot_check() -> None:
     """Mechanical gate only — never prints per-arm score means."""
-    state = load_state()
+    state = load_merged_state()
     ids = json.loads(IDS_PATH.read_text())["pilot_ids"]
     empties, sigmas, pre_lens = [], defaultdict(list), defaultdict(list)
     incomplete = []
@@ -364,7 +388,7 @@ def cmd_pilot_check() -> None:
 def cmd_analyze() -> None:
     from analysis.bootstrap import paired_bootstrap
 
-    state = load_state()
+    state = load_merged_state()
     ids = json.loads(IDS_PATH.read_text())["question_ids"]
     per_q: dict[str, dict[str, float]] = {}
     for qid in ids:
@@ -411,12 +435,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("cmd", choices=("draw", "run", "pilot-check", "analyze"))
     ap.add_argument("--pilot", action="store_true")
+    ap.add_argument("--shard", type=int, default=None)
+    ap.add_argument("--nshards", type=int, default=1)
     args = ap.parse_args()
     load_dotenv_explicit()
     if args.cmd == "draw":
         cmd_draw()
     elif args.cmd == "run":
-        cmd_run(pilot=args.pilot)
+        cmd_run(pilot=args.pilot, shard=args.shard, nshards=args.nshards)
     elif args.cmd == "pilot-check":
         cmd_pilot_check()
     else:
