@@ -195,11 +195,25 @@ def analyze(units: dict, basis_mode: str) -> dict:
         **res,
         "diagnostics": diag,
     }
+    # Transparency: what the ORIGINAL registered rule (CI merely excludes 0) would have
+    # concluded, reported alongside the D3-tightened rule so the tightening's effect on the
+    # verdict is visible rather than buried.
+    if ca["ci_low"] > 0.0:
+        r0 = res["B_minus_A"]["delta"] / ca["delta"]
+        out["registered_rule_unfloored"] = {
+            "gate_passes": True,
+            "recovery": r0,
+            "branch": branch_for(r0),
+        }
+    else:
+        out["registered_rule_unfloored"] = {"gate_passes": False, "recovery": None}
+
     # D3 #1: one-sided gate with a magnitude floor.
     if ca["ci_low"] > MIN_DENOM:
         r = res["B_minus_A"]["delta"] / ca["delta"]
         out["recovery"] = r
         out["branch"] = branch_for(r)
+        out["branch_key"] = branch_for(r).split()[0]
         if "recovery_ci" in res:
             lo, hi = res["recovery_ci"]
             spanned = sorted({branch_for(lo), branch_for(r), branch_for(hi)})
@@ -208,6 +222,7 @@ def analyze(units: dict, basis_mode: str) -> dict:
                 out["branch_identifiable"] = False
     else:
         out["recovery"] = None
+        out["branch_key"] = "STOP"
         out["branch"] = (
             "STOP / re-scope: the teacher-plan effect is not established on this stack "
             f"(C-A CI lower bound {ca['ci_low']:.2f} does not clear the +{MIN_DENOM} "
@@ -231,7 +246,7 @@ def main() -> int:
     primary, sens = results["per_unit"], results["as_stored"]
     results["sensitivity"] = {
         "primary_basis": "per_unit",
-        "branch_agrees_across_bases": primary.get("branch") == sens.get("branch"),
+        "branch_agrees_across_bases": primary.get("branch_key") == sens.get("branch_key"),
         "recovery_per_unit": primary.get("recovery"),
         "recovery_as_stored": sens.get("recovery"),
     }

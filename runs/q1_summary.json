@@ -1,0 +1,86 @@
+{
+  "per_unit": {
+    "label": "OpenRouter (student provider-pinned), matched-baseline, preregistered, n=40, basis=per_unit",
+    "n_questions": 40,
+    "mean_A_noplan": 36.81114391800538,
+    "mean_B_selfplan": 40.430585533927676,
+    "mean_C_teacherplan": 42.018712471205674,
+    "B_minus_A": {
+      "delta": 3.6194416159222955,
+      "ci_low": -0.233214634897332,
+      "ci_high": 7.731717842286993,
+      "p_value": 0.0674
+    },
+    "C_minus_A": {
+      "delta": 5.207568553200298,
+      "ci_low": 0.4732103121305357,
+      "ci_high": 9.758997359336625,
+      "p_value": 0.0308
+    },
+    "frac_resamples_denominator_unusable": 0.0405,
+    "recovery_ci": [
+      -0.0018060294034281594,
+      1.8052706040459723
+    ],
+    "diagnostics": {
+      "basis_reasons": {
+        "ladder_reconciled": 149,
+        "rescaled_to_declared": 152,
+        "ladder_fallback": 59
+      },
+      "renormalized": 93,
+      "skipped_incomplete": []
+    },
+    "registered_rule_unfloored": {
+      "gate_passes": true,
+      "recovery": 0.6950348476349825,
+      "branch": "STRUCTURE -> Q2 platform check"
+    },
+    "recovery": null,
+    "branch_key": "STOP",
+    "branch": "STOP / re-scope: the teacher-plan effect is not established on this stack (C-A CI lower bound 0.47 does not clear the +1.0 magnitude floor). recovery is undefined and must not be quoted."
+  },
+  "as_stored": {
+    "label": "OpenRouter (student provider-pinned), matched-baseline, preregistered, n=40, basis=as_stored",
+    "n_questions": 40,
+    "mean_A_noplan": 34.56774961891255,
+    "mean_B_selfplan": 38.283958636277156,
+    "mean_C_teacherplan": 39.21014381782558,
+    "B_minus_A": {
+      "delta": 3.716209017364607,
+      "ci_low": 0.012427206802852142,
+      "ci_high": 7.694325020338529,
+      "p_value": 0.0494
+    },
+    "C_minus_A": {
+      "delta": 4.642394198913031,
+      "ci_low": 0.29798732430191494,
+      "ci_high": 8.745691512049309,
+      "p_value": 0.0382
+    },
+    "frac_resamples_denominator_unusable": 0.0485,
+    "recovery_ci": [
+      0.08963396743698492,
+      1.9971243390018787
+    ],
+    "diagnostics": {
+      "basis_reasons": {},
+      "renormalized": 0,
+      "skipped_incomplete": []
+    },
+    "registered_rule_unfloored": {
+      "gate_passes": true,
+      "recovery": 0.8004940679606052,
+      "branch": "STRUCTURE -> Q2 platform check"
+    },
+    "recovery": null,
+    "branch_key": "STOP",
+    "branch": "STOP / re-scope: the teacher-plan effect is not established on this stack (C-A CI lower bound 0.30 does not clear the +1.0 magnitude floor). recovery is undefined and must not be quoted."
+  },
+  "sensitivity": {
+    "primary_basis": "per_unit",
+    "branch_agrees_across_bases": true,
+    "recovery_per_unit": null,
+    "recovery_as_stored": null
+  }
+}
