@@ -1,0 +1,416 @@
+<title>Q1 SELF-PLAN — result and the next run</title>
+<style>
+  :root {
+    --ink: #16202b;
+    --ground: #f4f6f8;
+    --card: #ffffff;
+    --muted: #5c6a78;
+    --rule: #d5dce3;
+    --accent: #0f6f7a;
+    --accent-soft: #dbeced;
+    --flag: #a8541f;
+    --flag-soft: #f6e7dc;
+    --solid: #2f6b4f;
+    --solid-soft: #e0ece5;
+    --band-know: #ead9cd;
+    --band-hyb: #e2e6ea;
+    --band-struct: #d3e5e6;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e4eaf0; --ground: #0f1721; --card: #16202b; --muted: #93a3b3;
+      --rule: #2a3846; --accent: #43aab5; --accent-soft: #1a3438;
+      --flag: #d98a52; --flag-soft: #33251b; --solid: #6cb28d; --solid-soft: #1b2c23;
+      --band-know: #3a2a1e; --band-hyb: #232d38; --band-struct: #1b3336;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e4eaf0; --ground: #0f1721; --card: #16202b; --muted: #93a3b3;
+    --rule: #2a3846; --accent: #43aab5; --accent-soft: #1a3438;
+    --flag: #d98a52; --flag-soft: #33251b; --solid: #6cb28d; --solid-soft: #1b2c23;
+    --band-know: #3a2a1e; --band-hyb: #232d38; --band-struct: #1b3336;
+  }
+  :root[data-theme="light"] {
+    --ink: #16202b; --ground: #f4f6f8; --card: #ffffff; --muted: #5c6a78;
+    --rule: #d5dce3; --accent: #0f6f7a; --accent-soft: #dbeced;
+    --flag: #a8541f; --flag-soft: #f6e7dc; --solid: #2f6b4f; --solid-soft: #e0ece5;
+    --band-know: #ead9cd; --band-hyb: #e2e6ea; --band-struct: #d3e5e6;
+  }
+
+  body {
+    background: var(--ground); color: var(--ink); font-family: var(--sans);
+    line-height: 1.55; margin: 0; padding: 0 1.25rem 5rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; }
+  section {
+    border-top: 1px solid var(--rule); padding: 3.25rem 0 0;
+    display: flex; flex-direction: column; gap: 1.15rem;
+  }
+  section:first-of-type { border-top: 0; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--muted); display: flex; gap: .6rem;
+  }
+  .eyebrow b { color: var(--accent); font-weight: 600; }
+  h1 {
+    font-size: clamp(2rem, 5vw, 3.1rem); line-height: 1.05; letter-spacing: -.025em;
+    margin: 0; text-wrap: balance; font-weight: 640;
+  }
+  h2 {
+    font-size: clamp(1.4rem, 2.8vw, 1.95rem); line-height: 1.15; letter-spacing: -.018em;
+    margin: 0; text-wrap: balance; font-weight: 620;
+  }
+  h3 { font-size: 1.02rem; margin: 0; font-weight: 620; letter-spacing: -.01em; }
+  p { margin: 0; max-width: 63ch; }
+  .lede { font-size: 1.12rem; color: var(--muted); max-width: 58ch; }
+  strong { font-weight: 640; }
+  .num, td.n, th.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  header.title { padding: 4.5rem 0 3.25rem; display: flex; flex-direction: column; gap: 1.4rem; }
+  .stamp {
+    font-family: var(--mono); font-size: .74rem; color: var(--muted);
+    display: flex; flex-wrap: wrap; gap: .4rem 1.1rem;
+  }
+
+  .verdict {
+    background: var(--flag-soft); border-left: 3px solid var(--flag);
+    padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: .45rem;
+  }
+  .verdict .tag {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--flag); font-weight: 600;
+  }
+  .estab { background: var(--solid-soft); border-left: 3px solid var(--solid); }
+  .estab .tag { color: var(--solid); }
+
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .94rem; min-width: 34rem; }
+  th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--rule); }
+  th { font-size: .74rem; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  td.n, th.n { text-align: right; }
+  tr.hi td { background: var(--accent-soft); }
+
+  /* interval plots — the argument of the deck */
+  .plot { display: flex; flex-direction: column; gap: .9rem; }
+  .row { display: grid; grid-template-columns: 8.5rem 1fr; gap: .9rem; align-items: center; }
+  .row .lab { font-family: var(--mono); font-size: .82rem; color: var(--muted); }
+  .track {
+    position: relative; height: 2.6rem; background: var(--card);
+    border: 1px solid var(--rule);
+  }
+  .bar {
+    position: absolute; top: 50%; transform: translateY(-50%); height: .42rem;
+    background: var(--accent); opacity: .3; border-radius: 2px;
+  }
+  .pt {
+    position: absolute; top: 50%; width: .72rem; height: .72rem;
+    transform: translate(-50%, -50%); background: var(--accent);
+    border-radius: 50%; border: 2px solid var(--card);
+  }
+  .zero, .floor {
+    position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink); opacity: .55;
+  }
+  .floor { background: var(--flag); opacity: 1; border-left: 1px dashed var(--flag); width: 0; }
+  .tick {
+    position: absolute; bottom: -1.35rem; font-family: var(--mono); font-size: .68rem;
+    color: var(--muted); transform: translateX(-50%); white-space: nowrap;
+  }
+  .bands { position: absolute; inset: 0; display: flex; }
+  .band { height: 100%; display: flex; align-items: flex-start; justify-content: center; }
+  .band span {
+    font-family: var(--mono); font-size: .6rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); padding-top: .18rem;
+  }
+  .axnote { font-family: var(--mono); font-size: .7rem; color: var(--muted); }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1.1rem; }
+  .case {
+    background: var(--card); border: 1px solid var(--rule); padding: 1.15rem 1.25rem;
+    display: flex; flex-direction: column; gap: .7rem;
+  }
+  .case .qid { font-family: var(--mono); font-size: .74rem; color: var(--accent); letter-spacing: .06em; }
+  .case ul { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: .3rem; font-size: .92rem; }
+  .trap { font-family: var(--mono); font-size: .78rem; color: var(--flag); }
+  .mech {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--muted); border-top: 1px solid var(--rule); padding-top: .55rem;
+  }
+
+  ol.arc { margin: 0; padding-left: 1.4rem; display: flex; flex-direction: column; gap: .55rem; }
+  ol.arc li { padding-left: .2rem; }
+  ul.plain { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: .45rem; }
+  .ask {
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    padding: 1.4rem 1.5rem; display: flex; flex-direction: column; gap: .8rem;
+  }
+  .askline { font-size: 1.25rem; font-weight: 640; letter-spacing: -.015em; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1rem; font-size: .93rem; }
+  .kv dt { font-family: var(--mono); font-size: .78rem; color: var(--muted); }
+  .kv dd { margin: 0; }
+  .tagline { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
+  .measured { color: var(--solid); }
+  .designed { color: var(--muted); }
+  footer { border-top: 1px solid var(--rule); margin-top: 3.25rem; padding-top: 1.5rem; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+
+  <header class="title">
+    <div class="eyebrow"><b>Q1 SELF-PLAN</b><span>result &amp; the next run</span></div>
+    <h1>The teacher&rsquo;s plan works. Whether the student can write it itself is one powered run from an answer.</h1>
+    <p class="lede">Two of three questions are settled. The third &mdash; the mechanism &mdash; was never
+      answerable at this sample size, and the pre-registered rule says so out loud instead of guessing.</p>
+    <div class="stamp">
+      <span>2026-07-30</span><span>OpenRouter, student provider-pinned DeepInfra fp8</span>
+      <span>n=40 &times; k=3 &middot; 360/360 cells &middot; 0 errors</span>
+      <span>student qwen3.6-27b &middot; teacher glm-5.2 &middot; judge gpt-5.2</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="eyebrow"><b>01</b><span>the arc</span></div>
+    <h2>Where the program stands</h2>
+    <ol class="arc">
+      <li><strong>Frozen memory is dead</strong> &mdash; null in four delivery forms across three domains
+        and two serving stacks. The literature agrees. Not reopened by anything below.</li>
+      <li><strong>The direction survives.</strong> Per-task teacher guidance is now measured on a
+        <em>second</em> stack: <span class="num">+5.21</span> points, CI excludes zero.</li>
+      <li><strong>The mechanism is one powered run from resolved.</strong> Today&rsquo;s STOP is a verdict
+        about a <em>ratio</em>, not about the mechanism. The next run tests the mechanism directly.</li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="eyebrow"><b>02</b><span>result</span></div>
+    <h2>The ladder</h2>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Arm</th><th class="n">Score</th><th>vs&nbsp;A</th><th class="n">95% CI</th><th class="n">p</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>A</strong> no-plan matched &mdash; student restates the question, then answers</td>
+              <td class="n">36.81</td><td>baseline</td><td class="n">&mdash;</td><td class="n">&mdash;</td></tr>
+          <tr><td><strong>B</strong> self-plan &mdash; student writes its own &le;250w plan</td>
+              <td class="n">40.43</td><td class="n">+3.62</td><td class="n">[&minus;0.23, +7.73]</td><td class="n">0.067</td></tr>
+          <tr class="hi"><td><strong>C</strong> teacher-plan &mdash; glm-5.2, question only</td>
+              <td class="n">42.02</td><td class="n">+5.21</td><td class="n">[+0.47, +9.76]</td><td class="n">0.031</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="verdict estab">
+      <span class="tag">established</span>
+      <p>A 250-word question-only plan from a stronger model measurably lifts a 27B student on
+        rubric-graded finance reasoning. Second stack, second student, second benchmark &mdash; so this is
+        <strong>generalization, not replication</strong>. It is smaller than the <span class="num">+6</span>
+        measured on Prime.</p>
+    </div>
+    <p>Self-planning captures most of the point estimate but <strong>touches zero</strong>
+      (<span class="num">p=0.067</span>). &ldquo;The student can plan for itself for free&rdquo; is
+      directionally supported and statistically unproven.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow"><b>03</b><span>why the mechanism is unresolved</span></div>
+    <h2>The point estimate looks decisive. Its interval covers every possible answer.</h2>
+    <p>Recovery &mdash; the share of the teacher&rsquo;s gain the student reaches on its own &mdash; is
+      <span class="num">3.62 &divide; 5.21 = <strong>0.695</strong></span>. That single number would read as
+      &ldquo;structure confirmed.&rdquo; Its confidence interval spans all three pre-registered branches.</p>
+
+    <div class="plot">
+      <div class="row">
+        <div class="lab">recovery ratio</div>
+        <div class="track">
+          <div class="bands">
+            <div class="band" style="width:16.65%;background:var(--band-know)"><span>knowledge</span></div>
+            <div class="band" style="width:16.7%;background:var(--band-hyb)"><span>hybrid</span></div>
+            <div class="band" style="width:66.65%;background:var(--band-struct)"><span>structure</span></div>
+          </div>
+          <div class="bar" style="left:0%;width:90.5%"></div>
+          <div class="pt" style="left:34.75%"></div>
+          <div class="tick" style="left:0%">0.00</div>
+          <div class="tick" style="left:16.65%">⅓</div>
+          <div class="tick" style="left:33.35%">⅔</div>
+          <div class="tick" style="left:34.75%; bottom:-2.5rem"><strong>0.695</strong></div>
+          <div class="tick" style="left:90.5%">1.81</div>
+        </div>
+      </div>
+    </div>
+    <p class="axnote" style="margin-top:1.6rem">The interval runs from the KNOWLEDGE band through HYBRID
+      into STRUCTURE. At n=40, dividing a ~3.6 effect by a ~5.2 effect at &plusmn;4 resolution cannot
+      produce a stable ratio. The pilot CI (0.61&ndash;4.06) predicted exactly this in advance.</p>
+
+    <div class="plot" style="margin-top:1.4rem">
+      <div class="row">
+        <div class="lab">B &minus; A self-plan</div>
+        <div class="track">
+          <div class="zero" style="left:16.67%"></div>
+          <div class="bar" style="left:14.75%;width:66.33%"></div>
+          <div class="pt" style="left:46.83%"></div>
+          <div class="tick" style="left:16.67%">0</div>
+          <div class="tick" style="left:46.83%">+3.62</div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="lab">C &minus; A teacher-plan</div>
+        <div class="track">
+          <div class="zero" style="left:16.67%"></div>
+          <div class="floor" style="left:25%"></div>
+          <div class="bar" style="left:20.58%;width:77.42%"></div>
+          <div class="pt" style="left:60.08%"></div>
+          <div class="tick" style="left:16.67%">0</div>
+          <div class="tick" style="left:25%;color:var(--flag)">floor&nbsp;+1.0</div>
+          <div class="tick" style="left:60.08%">+5.21</div>
+        </div>
+      </div>
+    </div>
+    <p class="axnote" style="margin-top:1.6rem">C&nbsp;&minus;&nbsp;A clears zero but its lower bound
+      (<span class="num">+0.47</span>) sits under the <span class="num">+1.0</span> magnitude floor, so the
+      denominator is too weak to divide by. Both normalization bases give the same branch.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow"><b>04</b><span>the discipline that mattered</span></div>
+    <h2>The original gate would have printed &ldquo;STRUCTURE confirmed.&rdquo; A blind tightening refused it.</h2>
+    <p>The shipped decision rule accepted any denominator whose CI excluded zero. Under that rule this run
+      passes the gate, reports recovery <span class="num">0.695</span>, and prints
+      <strong>&ldquo;STRUCTURE &rarr; Q2 platform check&rdquo;</strong>.</p>
+    <p>A 13-agent adversarial audit found the rule was also sign-blind &mdash; a teacher effect measured as
+      significantly <em>harmful</em> would have divided by a negative denominator and printed
+      &ldquo;KNOWLEDGE load-bearing.&rdquo; The fix &mdash; one-sided gate plus a magnitude floor &mdash; was
+      written and committed <strong>while nobody had seen a single per-arm mean</strong>.</p>
+    <div class="verdict">
+      <span class="tag">the eleventh caught failure mode &mdash; and the first flattering one</span>
+      <p>Every previous bug this program caught made results look <em>worse</em> than truth. This one would
+        have made them look better. Blind pre-registration is the only reason the difference is visible
+        rather than buried.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow"><b>05</b><span>evidence, per question</span></div>
+    <h2>Two questions, opposite mechanisms &mdash; the unidentifiability, concretely</h2>
+    <p>Both drawn from cells already paid for in this run. Item-level judge scores; named rubric traps.</p>
+    <div class="grid2">
+      <div class="case">
+        <div class="qid">fpb-00297 &middot; Research &middot; alt-data nowcast</div>
+        <h3>The student&rsquo;s own plan beat the teacher&rsquo;s</h3>
+        <div class="tablewrap">
+          <table>
+            <tbody>
+              <tr><td>A restated</td><td class="n">10.7</td><td class="trap">T2 T3 T6 T7</td></tr>
+              <tr class="hi"><td>B self-plan</td><td class="n">89.0</td><td class="trap">none</td></tr>
+              <tr><td>C teacher-plan</td><td class="n">49.0</td><td class="trap">T2 T3 T7</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li><strong>T3</strong> splitting the card/geolocation gap by invoking &ldquo;e-commerce mix
+            shift,&rdquo; bypassing the structural payment-routing explanation.</li>
+          <li><strong>T7</strong> updating the fundamental prior on contaminated panel data.</li>
+        </ul>
+        <div class="mech">planning structure was sufficient &mdash; and the teacher&rsquo;s plan was worse</div>
+      </div>
+      <div class="case">
+        <div class="qid">fpb-00149 &middot; Investment Banking &middot; new-issue pricing</div>
+        <h3>Only the teacher&rsquo;s knowledge helped</h3>
+        <div class="tablewrap">
+          <table>
+            <tbody>
+              <tr><td>A restated</td><td class="n">47.7</td><td class="trap">none</td></tr>
+              <tr><td>B self-plan</td><td class="n">49.5</td><td class="trap">none</td></tr>
+              <tr class="hi"><td>C teacher-plan</td><td class="n">62.5</td><td class="trap">none</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>No traps tripped by any arm. The entire gain is <strong>required-criteria coverage</strong>:
+            reconciling cash-bond against CDS-implied fair value, segmenting a 4.3&times; book before
+            tightening.</li>
+          <li>Self-planning moved it <span class="num">+1.8</span> &mdash; effectively flat.</li>
+        </ul>
+        <div class="mech">structure was not enough; domain knowledge was the binding constraint</div>
+      </div>
+    </div>
+    <p>Averaging opposite mechanisms across 40 questions is what produces a ratio that means nothing.
+      This is a reason to test the mechanisms directly, not to collect a bigger average.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow"><b>06</b><span>rig integrity</span></div>
+    <h2>Four measurement bugs caught before any number was reportable</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Defect</th><th>Effect if unfixed</th></tr></thead>
+        <tbody>
+          <tr><td>Judge truncation deflation &mdash; gpt-5.2 spent ~75% of a 2048-token budget on hidden
+            reasoning; truncated grades were <em>scored</em> by summing surviving items</td>
+            <td><span class="num">49%</span> of the aborted run&rsquo;s grades; deflation scaled with answer
+              length, i.e.&nbsp;<strong>with arm</strong></td></tr>
+          <tr><td>Wrong normalization denominator &mdash; rubrics declare a scaled basis the item ladder
+            doesn&rsquo;t match</td><td><span class="num">30 of 40</span> questions over-scaled
+              1.06&ndash;1.35&times;</td></tr>
+          <tr><td>Sign-blind decision gate</td><td>would print &ldquo;KNOWLEDGE load-bearing&rdquo; from a
+            significantly <em>negative</em> teacher effect</td></tr>
+          <tr><td>Teacher over-reasoning to empty content</td><td>glm-5.2 burned
+            <span class="num">10,924</span> of 12,000 tokens on reasoning and returned nothing</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="axnote">Every deviation (D0&ndash;D4) was committed before the data it affected. Every figure
+      regenerates from committed state with zero API calls.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow"><b>07</b><span>the ask</span></div>
+    <h2>Q2-SELF-PLAN: resolve the mechanism directly</h2>
+    <div class="ask">
+      <div class="askline">~$35 and one week. One experiment, not a program.</div>
+      <dl class="kv">
+        <dt>design</dt><dd><strong>Drop arm C.</strong> Its job is done. Test <span class="num">B&nbsp;&minus;&nbsp;A</span>
+          directly instead of dividing by a weak denominator.</dd>
+        <dt>n</dt><dd><span class="num">80</span> &mdash; the 40 already run plus the remaining 40 of the
+          frozen validation split. k=3, 3 judge passes, paired.</dd>
+        <dt>plus</dt><dd>A bare arm at <span class="num">n=20</span>: no preamble at all. Q1&rsquo;s design is
+          biased <em>toward</em> STOP because the restatement control may itself help &mdash; this bounds
+          that bias. Secondary measurement, changes no branch.</dd>
+        <dt>power</dt><dd>CI half-width on B&nbsp;&minus;&nbsp;A was <span class="num">~4.0</span> at n=40;
+          expect <span class="num">~2.8</span> at n=80, which resolves a +3.6 effect if it is real
+          <span class="designed">[design &mdash; assumes Q1 variance holds]</span></dd>
+      </dl>
+      <div class="tagline">branch rule committed before the first generation call &mdash; CI excludes zero
+        &rarr; self-plan works at 27B, next is held-out confirmation. CI includes zero at n=80 &rarr;
+        structure-alone is dead at this scale, and teacher-priced plans become the product.</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow"><b>08</b><span>scope</span></div>
+    <h2>What is deliberately <em>not</em> being asked for</h2>
+    <ul class="plain">
+      <li><strong>Cached teacher plans.</strong> That was the KNOWLEDGE branch&rsquo;s action, and KNOWLEDGE
+        did not fire. It re-enters only on a Q2 null.</li>
+      <li><strong>Any reopening of frozen memory.</strong> Dead four ways across three domains.</li>
+      <li><strong>Fine-tuning.</strong> Still outside scope; nothing here forces that conversation yet.</li>
+      <li><strong>A cross-stack claim.</strong> Every number on these slides is scoped to OpenRouter with the
+        student provider-pinned. Platform replication precedes any company-wide document.</li>
+    </ul>
+    <p>Shipping in parallel, with no research risk: a <strong>cascade</strong> &mdash; student by default,
+      teacher escalation on low-confidence items, confidence calibrated on already-graded cells. That is
+      product architecture, and will be presented as architecture, not as learning.</p>
+  </section>
+
+  <footer>
+    <p class="tagline">Sources: <span class="num">docs/RESULTS_Q1_SELF_PLAN.md</span> &middot;
+      <span class="num">docs/prereg/PREREG_Q1_SELF_PLAN.md</span> (D0&ndash;D4) &middot;
+      <span class="num">runs/q1_summary.json</span>. Regenerate every figure:
+      <span class="num">python3 scripts/q1_analyze.py</span> &mdash; no API calls.
+      <span class="measured">Measured</span> values come from run cells;
+      <span class="designed">[design]</span> marks untested inference.</p>
+  </footer>
+
+</div>
