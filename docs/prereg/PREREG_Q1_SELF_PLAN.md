@@ -4,8 +4,10 @@
 date: 2026-07-29
 branch: feat/q1-self-plan          # pin; never switch mid-run
 budget_cap: $10
-platform: student=Prime (single stack; claim scoped to student)
+platform: student=OpenRouter, provider-pinned (single stack; claim scoped to student)
           teacher=OpenRouter (plan generation, offline role)
+          judge=OpenRouter
+          [AMENDED 2026-07-30 — see Deviation log D1 below; original: student=Prime]
 student: qwen/qwen3.6-27b  (reasoning.enabled=false — verify in code)
 teacher: z-ai/glm-5.2      (max_tokens>=12000, hard exit on empty content;
                             OpenRouter — GLM empty-content behavior calibrated
@@ -54,8 +56,36 @@ prediction: recovery <= 1/3        # per user's stated expectation
 confidence: 70 %                   # author (Rohan), recorded before data
 notes: reviewer estimate ~50%
 
+## Deviation log (append-only; each entry committed BEFORE the affected run)
+
+**D0 — 2026-07-30, answer token cap 2048 -> 8192.** Pilot gate found 55/72 answers
+truncated mid-sentence, skewed by arm (A 16/24, B 19/24, C 20/24) — a confound against
+the plan-conditioned arms. Per the "pilot fails mechanically -> fix" rule the cap was
+raised. User decision: no separate pilot re-run; all questions run uniformly at 8192 in
+the full run. Pilot data at 2048 archived (`runs/q1_pilot2048_archive.json`), excluded
+from analysis.
+
+**D1 — 2026-07-30, student platform Prime -> OpenRouter.** The Prime team balance hit
+insufficient funds mid-run (HTTP 402); all 4 shards fail-fast aborted at 78/360 graded.
+User elected to switch platforms rather than refund Prime. Consequences, accepted
+knowingly:
+- The 78 Prime-graded units and 96 banked Prime answers are **discarded**, not merged —
+  mixing serving stacks inside one paired analysis is the confound this project already
+  documented (platform flip). Archived to `runs/q1_prime_partial_archive.json`.
+- The 13 teacher plans are **retained**: they were generated on OpenRouter/GLM from the
+  question text only, so they are platform-independent w.r.t. the student.
+- Student is provider-pinned on OpenRouter (`allow_fallbacks=false`, fp8) because 9
+  providers serve this slug; without a pin, serving config would drift within the run.
+- Cost rises to ~$36 vs the $10 planned cap (gpt-5.2 judge at $14/M output x 3 passes).
+  Budget is a fallback, not a stop: run continues, overage recorded here.
+- **The claim is now scoped to OpenRouter, not Prime.** Note the prior HINT/TRACE +6
+  result was measured on Prime with a different student and benchmark; Q1 was already a
+  generalization test, and is now also a different serving stack. If `C - A` CI includes
+  0, the pre-committed rule fires (STOP / re-scope) and the honest reading includes
+  "the teacher-plan effect was not established on this stack" as a live explanation.
+
 ## Declared limitations (written now)
-- Single stack (Prime). Any positive is scoped until Q2.
+- Single stack (OpenRouter, provider-pinned). Any positive is scoped until Q2.
 - n=40 resolves ~+/-4-5 points at this protocol; recovery ratio inherits
   wide CI if teacher-plan effect is small.
 - Restatement control could itself carry a small effect; accepted, declared.
