@@ -25,6 +25,7 @@ runs/*
 !runs/q1_summary.json
 !runs/q1_state_shard*.json
 !runs/q1_pilot2048_archive.json
+!runs/q1_prime_partial_archive.json
 !runs/q1_pilot_check.txt
 # probe resume log (intermediate); final fixture+manifest are committed
 # runs/probe_results.jsonl lives under runs/

@@ -99,8 +99,29 @@ def startup_asserts() -> None:
         raise SystemExit(f"FATAL: student model {student!r} != {EXPECTED_STUDENT!r}")
     base = (os.environ.get("AGENT_BASE_URL") or "").strip()
     print(f"[startup] AGENT_BASE_URL = {base!r}", flush=True)
-    if "pinference" not in base.lower() and "primeintellect" not in base.lower():
-        raise SystemExit("FATAL: prereg pins platform=Prime; AGENT_BASE_URL is not Prime")
+    if "openrouter.ai" not in base.lower():
+        raise SystemExit("FATAL: prereg D1 pins student=OpenRouter; AGENT_BASE_URL is not OpenRouter")
+    # 9 providers serve this slug — without an active pin, serving config drifts mid-run.
+    from harness.agent import openrouter_provider_pin
+
+    pin = openrouter_provider_pin(EXPECTED_STUDENT)
+    if not pin:
+        raise SystemExit(
+            f"FATAL: no provider pin active for {EXPECTED_STUDENT!r} — set "
+            "OPENROUTER_PIN_MODEL and OPENROUTER_PROVIDER_ORDER (prereg D1)"
+        )
+    print(f"[startup] student pin  = {pin['provider']}", flush=True)
+    # The judge client falls back to PRIME_API_KEY; with an OpenRouter base that 401s.
+    jkey = (os.environ.get("JUDGE_API_KEY") or "").strip()
+    jbase = (os.environ.get("JUDGE_BASE_URL") or base).strip()
+    if "openrouter.ai" not in jbase.lower():
+        raise SystemExit("FATAL: judge base is not OpenRouter (prereg D1)")
+    if not jkey or jkey != (os.environ.get("OPENROUTER_API_KEY") or "").strip():
+        raise SystemExit(
+            "FATAL: JUDGE_API_KEY must be the OpenRouter key — otherwise the judge "
+            "client falls back to PRIME_API_KEY against an OpenRouter base (401)"
+        )
+    print(f"[startup] judge base   = {jbase!r} (OpenRouter key asserted)", flush=True)
     if os.environ.get("AGENT_ENABLE_THINKING", "").strip() in ("1", "true", "yes"):
         raise SystemExit("FATAL: AGENT_ENABLE_THINKING set — prereg requires reasoning off")
     # Teacher venue: OpenRouter (GLM empty-content behavior calibrated there — prereg).
