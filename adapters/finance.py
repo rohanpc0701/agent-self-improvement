@@ -544,11 +544,13 @@ def scrub_leakage(text: str) -> str:
 
 
 def _teacher_max_tokens() -> int:
-    raw = (os.environ.get("TEACHER_MAX_TOKENS") or "4000").strip()
+    # Reasoning teachers spend hidden reasoning against the same max_tokens;
+    # anything under 12k has returned empty content on hard tasks (Q1 checklist).
+    raw = (os.environ.get("TEACHER_MAX_TOKENS") or "12000").strip()
     try:
-        return max(256, int(raw))
+        return max(12000, int(raw))
     except ValueError:
-        return 4000
+        return 12000
 
 
 _TEACHER_SYSTEM = (
@@ -604,6 +606,11 @@ def teacher_repair(
             max_tokens=max(max_tokens, 8192),
         )
         text = (resp2.choices[0].message.content or "").strip()
+    if not text:
+        raise RuntimeError(
+            f"teacher returned EMPTY content for {qid} after retry "
+            f"(max_tokens={max(max_tokens, 8192)}) — refusing to continue"
+        )
     return text
 
 
