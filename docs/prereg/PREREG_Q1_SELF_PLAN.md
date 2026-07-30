@@ -84,6 +84,26 @@ knowingly:
   0, the pre-committed rule fires (STOP / re-scope) and the honest reading includes
   "the teacher-plan effect was not established on this stack" as a live explanation.
 
+**D2 — 2026-07-30, judge fixed before the OpenRouter run (two scoring bugs).** A
+diagnosis of fpb-00103's ~90% grade-failure rate found defects affecting *all*
+questions, not just that one:
+- *Truncated grades were scored instead of retried.* gpt-5.2 burned ~75% of the
+  2048-token judge budget on hidden reasoning (measured: 1527/2048 reasoning tokens,
+  `finish_reason='length'`), cutting output off before `TOTAL`; the parser then summed
+  whatever R items survived. **38/78 grades in the aborted Prime run (49%) and 22/72 in
+  the pilot (31%) came through that path.** Deflation grows with judge-output length,
+  which grows with answer length, which differs by arm — a bias against the
+  plan-conditioned arms B and C. Fix: reasoning disabled on judge calls, budget
+  2048→8192, repair retry escalates, missing `TOTAL` now raises.
+- *Wrong denominator.* 38/40 rubrics instruct `TOTAL` on a declared basis (`MAX: 100`)
+  while the item ladder sums to 70–92 → 30/40 questions over-scaled 1.06–1.35×. Fix:
+  denominator read from the rubric text (deterministic per question, identical across
+  arms/reps), explicitly not from the judge's output.
+
+Both fixes precede any OpenRouter data, so the Q1 run is uniform. Consequence for
+history: normalized scores in `docs/FINDINGS_FINANCE.md` were produced under the old
+denominator and the old truncation path, and are not comparable to Q1's numbers.
+
 ## Declared limitations (written now)
 - Single stack (OpenRouter, provider-pinned). Any positive is scoped until Q2.
 - n=40 resolves ~+/-4-5 points at this protocol; recovery ratio inherits
