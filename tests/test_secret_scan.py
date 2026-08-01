@@ -70,6 +70,45 @@ def test_hard_patterns_still_apply_to_data_files():
     assert "OpenRouter key" in _names(hits)
 
 
+# --- regressions for the audit findings (2026-08-01) ---------------------------
+# The original rule had a leading \b before the credential keyword. '_' is a word
+# character, so no boundary exists in MINIMAX_API_KEY= and NO prefixed variable name
+# could ever match -- while the only test then present used a bare `api_key`, so the
+# suite stayed green over a scanner blind to every real-world name.
+
+FAKE_LONG = "e" * 120   # MiniMax-length opaque value
+FAKE_MED = "z" * 64     # Prime-length opaque value
+
+
+def test_prefixed_variable_names_match():
+    """MINIMAX_API_KEY / PRIME_API_KEY etc. -- not just a bare `api_key`."""
+    for name in ("MINIMAX_API_KEY", "PRIME_API_KEY", "OPENROUTER_API_KEY",
+                 "JUDGE_API_KEY", "SOME_NEW_PROVIDER_TOKEN"):
+        assert scan_text("x.env", f"{name}={FAKE_LONG}"), f"missed prefixed name {name}"
+
+
+def test_unquoted_dotenv_and_export_forms():
+    """A leaked .env copy has no quotes around values."""
+    assert scan_text(".env.bak", f"MINIMAX_API_KEY={FAKE_LONG}")
+    assert scan_text("setup.sh", f"export PRIME_API_KEY={FAKE_MED}")
+
+
+def test_all_contexts_a_leaked_key_appears_in():
+    name, val = "PRIME_API_KEY", FAKE_MED
+    for ctx in (f"{name}={val}", f"export {name}={val}", f'{name} = "{val}"',
+                f'{{"{name}": "{val}"}}', f"{name}: {val}"):
+        assert scan_text("x", ctx), f"missed context: {ctx[:40]}"
+
+
+def test_non_credential_config_is_not_flagged():
+    """Model slugs, URLs and numbers must stay quiet or the hook gets bypassed."""
+    for line in ("AGENT_MODEL=qwen/qwen3.6-27b",
+                 "AGENT_BASE_URL=https://openrouter.ai/api/v1",
+                 "TEACHER_MAX_TOKENS=32000",
+                 "OPENROUTER_PROVIDER_ORDER=deepinfra,alibaba"):
+        assert not scan_text(".env.example", line), f"false positive: {line}"
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

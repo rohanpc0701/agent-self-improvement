@@ -2,7 +2,12 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+# Bare '.env' matches ONLY that filename — .env.bak/.env.local from a routine
+# `cp .env .env.bak` before editing would otherwise be committable.
 .env
+.env.*
+*.env
+!.env.example
 CLAUDE.local.md
 .claude/settings.local.json
 # Spider data (downloaded, not committed)

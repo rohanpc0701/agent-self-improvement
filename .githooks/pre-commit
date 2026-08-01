@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
 # Block credentials from entering the repo. Install: git config core.hooksPath .githooks
 set -euo pipefail
-exec python3 "$(git rev-parse --show-toplevel)/scripts/secret_scan.py" --staged
+ROOT="$(git rev-parse --show-toplevel)"
+
+# Belt to the .gitignore braces: catches `git add -f` on an env file, which bypasses
+# .gitignore entirely. .env.example is the one intentional exception.
+staged_env="$(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '(^|/)(\.env($|\.)|.*\.env$|env\.sh$)' \
+  | grep -v '\.env\.example$' || true)"
+if [ -n "$staged_env" ]; then
+  echo "BLOCKED: refusing to commit an environment file:" >&2
+  echo "$staged_env" | sed 's/^/  /' >&2
+  echo "These hold live credentials. Use .env.example for shareable templates." >&2
+  exit 1
+fi
+
+exec python3 "$ROOT/scripts/secret_scan.py" --staged

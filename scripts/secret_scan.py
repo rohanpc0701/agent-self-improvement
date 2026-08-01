@@ -38,16 +38,33 @@ PATTERNS: list[tuple[str, re.Pattern]] = [
         "credential assignment",
         re.compile(
             r"""(?ix)
-            \b(?:api[_-]?key|secret|token|passwd|password|access[_-]?key|private[_-]?key)
-            \b\s*[:=]\s*
-            # NOTE: every alternative below must be non-empty. An alternative that can
-            # match the empty string (e.g. \s*) makes this negative lookahead always
-            # succeed, which silently disables the whole rule.
-            ['"](?!(?:\s+|x{3,}|\.{3,}|<[^>]+>|\$\{|%\(|your[_-]|example|placeholder|redacted|changeme|dummy|fake|none|null))
-            ([A-Za-z0-9_\-/+=]{24,})['"]
+            # Name: allow provider prefixes (MINIMAX_API_KEY, PRIME_API_KEY, OR_TOKEN).
+            # A leading \b here would be a bug: '_' is a word character, so there is NO
+            # boundary between the prefix and the keyword, and every prefixed name --
+            # i.e. almost every real one -- would silently never match.
+            # Include quotes in the boundary so JSON keys ("MINIMAX_API_KEY": "...") match.
+            (?:^|[\s,;{(\["'])(?:[A-Za-z0-9]+[_-])*
+            (?:api[_-]?key|secret|token|passwd|password|access[_-]?key|private[_-]?key)
+            # Optional closing quote: in JSON the name is quoted ("API_KEY": "value"), so
+            # the quote sits between the name and the separator.
+            ['"]?\s*[:=]\s*
+            # Quotes optional: unquoted `KEY=value` is the dotenv and `export` form, which
+            # is exactly how a leaked .env copy looks.
+            ['"]?
+            # Every alternative below must be non-empty. One that can match the empty
+            # string (e.g. \s*) makes this negative lookahead always succeed, which
+            # silently disables the whole rule.
+            (?!(?:\s+|x{3,}|\.{3,}|<[^>]+>|\$\{|%\(|your[_-]|example|placeholder|redacted|changeme|dummy|fake|none|null))
+            ([A-Za-z0-9_\-/+=.]{24,})
+            ['"]?
             """
         ),
     ),
+    # Long opaque bearer-ish values assigned to a credential-named variable are caught by
+    # the rule above regardless of provider, so new providers are covered without needing
+    # their prefix enumerated here. Provider-specific rules stay only where the shape is
+    # distinctive enough to catch the value even OUTSIDE an assignment (e.g. pasted into
+    # prose or JSON).
 ]
 
 # Files that legitimately describe credential *shapes* — this scanner, its test, and docs
