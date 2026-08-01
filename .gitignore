@@ -32,3 +32,8 @@ runs/*
 .venv-alfworld/
 # PRBench cache is committed on purpose (small, needed for splits)
 .DS_Store
+
+# Agent tooling installed locally (plugin skill copies, lockfile, editor prefs)
+.agents/
+skills-lock.json
+.claude/settings.json
