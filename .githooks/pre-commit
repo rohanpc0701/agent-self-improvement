@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Block credentials from entering the repo. Install: git config core.hooksPath .githooks
+set -euo pipefail
+exec python3 "$(git rev-parse --show-toplevel)/scripts/secret_scan.py" --staged

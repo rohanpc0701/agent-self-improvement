@@ -1,0 +1,51 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"   # Monday 06:00 UTC — catches CVEs disclosed after a merge
+
+permissions:
+  contents: read          # least privilege; nothing here needs write
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # history scan needs full history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scan tracked files for credentials
+        run: python3 scripts/secret_scan.py --tracked
+      - name: Scan git history for credentials
+        run: python3 scripts/secret_scan.py --history
+
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Audit dependencies for known CVEs
+        run: |
+          pip install pip-audit
+          pip-audit --requirement requirements.txt --strict
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Bandit (Python security linter)
+        run: |
+          pip install bandit
+          # Tests legitimately construct fake credentials and assert on them.
+          bandit -r adapters correction harness analysis scripts contracts -ll
