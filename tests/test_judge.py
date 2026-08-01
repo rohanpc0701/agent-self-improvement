@@ -50,12 +50,14 @@ class TestParse:
         assert "B1" in out["bonuses"]
         assert abs(out["normalized"] - (13 / 18) * 100) < 1e-6
 
-    def test_missing_total_with_items_uses_fallback(self):
-        # Missing TOTAL but scorable R items → reconstruct total, don't raise.
+    def test_missing_total_raises_instead_of_reconstructing(self):
+        # D2: a missing TOTAL means the judge was cut off mid-grade, so the R items
+        # present are a PARTIAL list. Summing them deflates the score in proportion
+        # to answer length — i.e. correlated with arm. Raise so the caller retries.
         bad = "R1: 5 — something\n(no total)"
-        out = parse_judge_output(bad, max_points=18.0)
-        assert out["total"] == 5.0
-        # Clean parse still works and prefers the explicit TOTAL line.
+        with pytest.raises(JudgeParseError, match="missing TOTAL"):
+            parse_judge_output(bad, max_points=18.0)
+        # Clean parse still works and uses the explicit TOTAL line.
         out2 = parse_judge_output(CLEAN, max_points=18.0)
         assert out2["total"] == 13.0
 
@@ -95,7 +97,7 @@ class TestRepairRetry:
         missing = "This response has no structured scores at all.\n"
         calls: list[str] = []
 
-        def fake_chat(client, *, model, messages, temperature, max_tokens):
+        def fake_chat(client, *, model, messages, temperature, max_tokens, **kwargs):
             # Second call is the repair pass.
             text = CLEAN if len(calls) else missing
             calls.append(messages[-1]["content"] if messages else "")
@@ -120,7 +122,7 @@ class TestRepairRetry:
         """Empty first completion must repair without an empty assistant turn."""
         calls: list[list] = []
 
-        def fake_chat(client, *, model, messages, temperature, max_tokens):
+        def fake_chat(client, *, model, messages, temperature, max_tokens, **kwargs):
             calls.append(messages)
             if len(calls) == 1:
                 return _fake_chat_response("")  # empty judge output
@@ -152,7 +154,7 @@ class TestRepairRetry:
         # Unparseable on both passes (no items, no TOTAL) → still raises.
         missing = "no scores here either\n"
 
-        def fake_chat(client, *, model, messages, temperature, max_tokens):
+        def fake_chat(client, *, model, messages, temperature, max_tokens, **kwargs):
             return _fake_chat_response(missing)
 
         with (
@@ -174,7 +176,7 @@ class TestRepairRetry:
 
         calls: list[dict] = []
 
-        def fake_chat(client, *, model, messages, temperature, max_tokens):
+        def fake_chat(client, *, model, messages, temperature, max_tokens, **kwargs):
             calls.append({"max_tokens": max_tokens})
             text = "" if len(calls) == 1 else CLEAN
             return _fake_chat_response(text)
@@ -186,7 +188,7 @@ class TestRepairRetry:
         ):
             out = grade("q?", SAMPLE_RUBRIC, "student answer", model="openai/gpt-5.2")
         assert len(calls) == 2
-        assert calls[1]["max_tokens"] == 3072  # empty → bumped budget
+        assert calls[1]["max_tokens"] == 8192  # D2: empty → max(3072, judge budget)
         assert out["total"] == 13.0
 
     def test_grade_prompt_requires_total_line(self):
@@ -205,19 +207,25 @@ class TestJudgeNeTeacher:
         assert j.JUDGE_MODEL != j.TEACHER_MODEL
 
 
-def test_total_fallback_from_items_when_total_missing():
-    from correction.judge import parse_judge_output
-    # No TOTAL line — must reconstruct from R items minus traps plus bonuses.
+def test_no_total_line_is_a_failed_measurement_not_a_low_score():
+    from correction.judge import JudgeParseError, parse_judge_output
+    # Superseded by D2: reconstructing a total from a truncated item list produced
+    # arm-correlated deflation in 49% of one run's grades. A partial grade is a
+    # failed measurement, not a low score.
     raw = (
         "R1: 8 — solid framework\n"
         "R2: 5 — partial calc\n"
         "trap T3: -4 aggregation error\n"
         "bonus B1: +2 nice synthesis\n"
     )
-    out = parse_judge_output(raw, max_points=20.0)
-    assert out["total"] == 8 + 5 - 4 + 2  # 11
+    with pytest.raises(JudgeParseError, match="missing TOTAL"):
+        parse_judge_output(raw, max_points=20.0)
+    # Items/traps still parse when the grade is complete — the change is that a
+    # truncated grade is refused, not that item parsing regressed.
+    out = parse_judge_output(raw + "TOTAL: 11\n", max_points=20.0)
     assert out["traps_hit"] == ["T3"]
     assert out["items"] == {"R1": 8.0, "R2": 5.0}
+    assert out["total"] == 11.0
 
 
 def test_still_errors_when_no_total_and_no_items():

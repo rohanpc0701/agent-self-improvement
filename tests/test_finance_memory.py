@@ -86,7 +86,7 @@ class TestTeacherRepair:
         assert out == "REPAIRED ANSWER"
         kwargs = mock_client.chat.completions.create.call_args.kwargs
         assert kwargs["model"] == "z-ai/glm-5.2"
-        assert kwargs["max_tokens"] == 4000
+        assert kwargs["max_tokens"] == 12000  # D2/D4: reasoning teachers need headroom or return empty content
         user = kwargs["messages"][1]["content"]
         assert p["question"] in user
         assert p["rubric"] in user

@@ -1,155 +1,97 @@
-# Agent Self-Improvement
+# Teacher → student reasoning, measured
 
 [![CI](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml/badge.svg)](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml)
 
-Open-source harness for **runtime self-correction** of verifiable agents: detect accuracy drift, repair failures with a stronger teacher, store `(trap, fix)` rules in a knowledge graph, and re-run with learned context — no fine-tuning, no human in the loop.
+A research harness asking whether a **stronger teacher model** can improve a **cheaper student
+model** on rubric-graded expert finance reasoning — **without fine-tuning**.
 
-Domains plug in through a `TaskAdapter` (`coding`, `spider`, `gsm8k`). The primary measured domain is **hard coding** (unit-test verified Python).
+Honest nulls over optimistic claims. Every headline below is reproducible from committed data
+with no API calls.
 
-![Recovery curve from recorded telemetry](docs/demo.gif)
-
----
-
-## Results
-
-### Coding (primary) — Prime student + teacher + KG
-
-| | |
-|---|---|
-| Student | `meta-llama/Llama-3.2-3B-Instruct` via [Prime Inference](https://docs.primeintellect.ai/inference/overview) |
-| Teacher | `minimax/minimax-m2.5` on Prime (called only on drift) |
-| Eval | Hard held-out unique questions, sandboxed unit tests (`fixtures/coding_subset.json`, 70 problems) |
-| Feedback | Teacher-verified few-shots + topic-scoped KG rules (`AGENT_USE_RULES=1`) |
-
-| Hard-bucket accuracy (11 unique held-out questions) | |
-|---|---|
-| WITHOUT examples / rules | 0.273 |
-| WITH correction (recovered) | **0.455** |
-| **Δ** | **+0.182** |
-
-On that run: drift fired (`severity=0.320`), correction produced **15 teacher / 1 gold / 2 anchor** examples, and **3** KG rules were written. Reproduce:
-
-```bash
-# .env: PRIME_API_KEY=...
-bash scripts/use_prime_student.sh smoke   # student + teacher unit-test check
-bash scripts/use_prime_student.sh full    # baseline → drift → teacher+KG → recovery
-```
-
-### Spider (secondary / historical)
-
-| Config | WITHOUT | WITH | Δ |
-|---|---|---|---|
-| Local Qwen2.5-1.5B + MiniMax teacher, examples only (`AGENT_USE_RULES=0`) | 0.100 | 0.333 | +0.233 |
-| Hackathon MiniMax M2.7 student + M3 teacher | 0.300 | 0.567 | +0.267 |
-
-Spider detail (dose-response, McNemar, KG A/B) lives in [`docs/design.md`](docs/design.md). GSM8K is wired as an adapter; do not claim a held-out Δ until measured.
+> **History:** this repo began as a hackathon demo (drift detection over a text-to-SQL agent on
+> Spider). That project has been removed. Nothing about Spider, drift detection, or the old
+> four-stage loop is current.
 
 ---
 
-## Loop
+## What we found
 
-```
-  Harness ──TelemetryRecord──▶ Detector ──DriftEvent──▶ Correction
-     ▲                                                       │
-     └──── few-shot examples + KG rules (runtime feedback) ──┘
-                  all stages ──▶ events.jsonl ──▶ Viewer
-```
+**Transferring the teacher's general knowledge fails. Transferring its per-task guidance works.**
 
-| Stage | Role |
-|-------|------|
-| **[Harness](harness/)** | Runs the student on a change-point feed (easy baseline → hard degraded → hard recovery) |
-| **[Detector](detector/)** | Windowed drift on `execution_accuracy`; emits `failing_run_ids` + failure mode |
-| **[Correction](correction/)** | Teacher repair → verify → few-shots; distill `(trap, fix)` into the KG |
-| **[Viewer](viewer/)** | Live recovery curve + correction timeline from `events.jsonl` |
+| Intervention | Result |
+|---|---|
+| Frozen general lessons (playbooks, traps, skeletons) | **Null** across 4 delivery forms, 3 domains, 2 serving stacks. Best case +1.39, n.s. |
+| Per-task teacher plan (≤250 words) | **+6.0 / +6.1** (Prime), **+5.21** (OpenRouter) — significant on both |
 
-Learning is the growing `AgentConfig.few_shot_examples` list (and optional KG prompt injection). The student model is not swapped for a larger one.
+Four measured reasons the memory approach fails:
 
-**Measurement guardrails:** hard-bucket only; unique-question accuracy; LEARN vs HELD-OUT split so recovery is out-of-sample.
+1. **Text cannot fix arithmetic.** Frozen memory recovered **−0.1** points of Financial Accuracy
+   (predicted in advance); a per-task plan recovered **+3.5**, because it names which quantities
+   to compute.
+2. **Unconditional injection is a wash by construction.** It helps weak drafts and hurts strong
+   ones — r(Δ, baseline score) = −0.44, independently reproduced at −0.34 on a second benchmark.
+3. **Validation-uplift gating selects noise:** +7.1 on validation → +1.5 held-out.
+4. **The student's failure is indexing, not ignorance.** 75% of its lost points are *omissions*.
+   The lessons were correct and in context; it couldn't connect a general principle to the case
+   in front of it. That connective step is what the teacher's per-task plan performs.
+
+**Q1 (latest, n=40 × k=3, 360 cells, OpenRouter provider-pinned):**
+
+| Arm | Score | vs baseline |
+|---|--:|---|
+| A — student restates the question, then answers | 36.81 | — |
+| B — student writes its own ≤250w plan | 40.43 | +3.62 [−0.23, +7.73], p=0.067 |
+| C — teacher writes a ≤250w plan | 42.02 | **+5.21 [+0.47, +9.76], p=0.031** |
+
+The pre-registered branch rule returned **STOP / re-scope**: recovery = 0.695 but its confidence
+interval is [0.00, 1.81], spanning every possible conclusion. Under the *original* rule the same
+data would have printed "STRUCTURE confirmed" — a tightening committed while blind to all
+per-arm means refused it.
+
+Full result: [`docs/RESULTS_Q1_SELF_PLAN.md`](docs/RESULTS_Q1_SELF_PLAN.md).
+
+---
+
+## Measurement discipline
+
+The rig is the durable asset. Bugs it has caught, each of which silently corrupted scores:
+
+- **Reasoning models return empty content** when `max_tokens` caps reasoning and content
+  together — a judge spent 1527/2048 tokens reasoning and emitted nothing; a teacher spent
+  10,924/12,000.
+- **Truncated judge output was scored, not retried** — the parser summed surviving rubric items,
+  deflating scores in proportion to answer length, i.e. correlated with the arm under test. This
+  affected 49% of one run's grades.
+- **Normalization denominators disagree** — rubrics declare a scaled basis the item ladder
+  doesn't match, and the judge's basis can vary *within* a question.
+- **Decision rules can be sign-blind** — a two-sided "CI excludes 0" gate accepts a significantly
+  *negative* effect and divides by it.
+
+Standing rules: ≥3 repeats averaged before believing any delta (temp-0 noise is ±10–20 points);
+pre-registration committed before the first generation call; held-out is the constraint and
+validation is only a filter; every claim scoped to its serving stack.
 
 ---
 
 ## Quickstart
 
 ```bash
-pip install -e .   # Python ≥ 3.10
-python fixtures/generate_mocks.py
+pip install -e .          # Python ≥ 3.10
+python3 -m pytest -q      # 202 tests, hermetic, no API key needed
 ```
 
-### Coding on Prime (recommended)
+Reproduce the latest result from committed cells — no API calls, no credentials:
 
 ```bash
-# .env
-# PRIME_API_KEY=...
-
-bash scripts/use_prime_student.sh list
-bash scripts/use_prime_student.sh smoke
-bash scripts/use_prime_student.sh probe          # cheap WITH/WITHOUT (~22 calls)
-bash scripts/use_prime_student.sh full           # full loop + KG on recovery
-bash scripts/use_prime_student.sh compare        # after full: student+memory vs teacher
-bash scripts/use_prime_student.sh curriculum     # hard-curriculum eval (see below)
-# or one shot: bash scripts/use_prime_student.sh full-compare
+python3 scripts/q1_analyze.py     # -> runs/q1_summary.json
 ```
 
-**Hard-curriculum eval** (the intended product measurement):
-
-1. Easy warmup only for the detector (~40) — not the teaching diet  
-2. ~100 hard LEARN instances → drift → teacher few-shots + KG  
-3. Freeze memory  
-4. Score **student+memory vs unaided teacher** on held-out hard (never in LEARN)
+Run an experiment (needs `.env` with `OPENROUTER_API_KEY`; the entrypoint asserts model slugs,
+base URLs and judge≠teacher before spending anything):
 
 ```bash
-bash scripts/use_prime_student.sh curriculum
-# N_LEARN=120 N_HELDOUT=40 bash scripts/use_prime_student.sh curriculum
-```
-
-
-Overrides: `PRIME_AGENT_MODEL=...` (student), `PRIME_TEACHER_MODEL=...` (teacher).
-
-### Coding on OpenRouter (wide model catalog)
-
-Use when you want mid-size / coder models beyond Prime’s inventory (ablation next step: promote student off the 3B floor).
-
-```bash
-# .env
-# OPENROUTER_API_KEY=...
-
-bash scripts/use_openrouter_student.sh list
-bash scripts/use_openrouter_student.sh smoke
-bash scripts/use_openrouter_student.sh curriculum
-```
-
-Defaults: student `qwen/qwen3-coder`, teacher `qwen/qwen3-coder-plus`.  
-Overrides: `OR_AGENT_MODEL=...`, `OR_TEACHER_MODEL=...`.
-
-### Local student (Ollama) + optional MiniMax teacher
-
-```bash
-ollama pull qwen2.5:1.5b-instruct
-export AGENT_BASE_URL=http://localhost:11434/v1
-export AGENT_MODEL=qwen2.5:1.5b-instruct
-# optional if not using TEACHER_USE_PRIME=1:
-export MINIMAX_API_KEY=sk-...
-
-python orchestrator.py --adapter coding --full --fresh
-```
-
-### Other adapters / gates
-
-```bash
-python orchestrator.py --adapter spider --full --fresh
-python orchestrator.py --adapter gsm8k --full --fresh
-
-python orchestrator.py --adapter coding --probe
-python orchestrator.py --adapter coding --dry-run-heldout
-python orchestrator.py --adapter coding --significance   # after a --full run
-```
-
-### Viewer (no API key)
-
-```bash
-pip install -r requirements.txt
-make demo
-# or: VIEWER_LOG=events.jsonl uvicorn viewer.app:app --port 8011
+python3 scripts/q1_self_plan.py draw                          # freeze the question set, commit it
+python3 scripts/q1_self_plan.py run --shard 0 --nshards 4     # one shard of four
 ```
 
 ---
@@ -157,23 +99,27 @@ make demo
 ## Layout
 
 ```
-contracts/       Shared Pydantic schemas + events.jsonl I/O
-core/            TaskAdapter protocol
-adapters/        coding, spider_sql, gsm8k_math
-harness/         Student client, feed, Spider eval, coding sandbox
-detector/        Windowed drift detection
-correction/      Teacher, verify, anchors, KG (graph / inject / distill)
-viewer/          FastAPI + Chart.js
-fixtures/        Coding subset, Spider/GSM8K slices, demo event logs
-scripts/         use_prime_student.sh, run_coding_eval.sh, multi_seed_eval.py
-orchestrator.py  End-to-end loop (--adapter, --continuous, --fresh)
+adapters/finance.py    Dataset, splits, student prompt, teacher repair/distill
+correction/judge.py    Weighted-criteria rubric judge  ← read the comments before editing
+correction/provider.py Teacher/judge client resolution (OpenRouter / Prime / MiniMax)
+harness/agent.py       Student hot path: retries, provider pinning, fallback assertions
+analysis/bootstrap.py  Paired bootstrap (note: sorts its resample array in place)
+scripts/               Experiment harnesses and analysis
+contracts/, fixtures/  Shared record shapes, dataset cache, frozen manifests
+docs/prereg/           Pre-registrations and deviation logs
 ```
 
-```bash
-pytest    # 231 tests (hermetic; no live API required)
-```
+## Where to start reading
 
----
+| Doc | Contents |
+|---|---|
+| [`CLAUDE.md`](CLAUDE.md) | Orientation for AI assistants — constraints and known failure modes |
+| [`docs/CONTEXT_SAVE_2026-07-30.md`](docs/CONTEXT_SAVE_2026-07-30.md) | Current state in full |
+| [`docs/prereg/PREREG_Q1_SELF_PLAN.md`](docs/prereg/PREREG_Q1_SELF_PLAN.md) | Pre-registration + deviations D0–D4 |
+| [`docs/STRATEGY_LADDER.md`](docs/STRATEGY_LADDER.md) | Pre-registered escalation if the current bet nulls |
+
+Benchmarks: [PRBench](https://arxiv.org/abs/2511.11562) (Scale AI) and FinancePro-Bench
+(`Sanscritic/finance-pro-bench`, CC-BY-4.0).
 
 ## Author
 
