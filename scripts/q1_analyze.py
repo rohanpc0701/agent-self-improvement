@@ -75,10 +75,11 @@ def unit_basis(raw: str, ladder: float, declared: float | None) -> tuple[float, 
     Otherwise the judge rescaled, so the rubric's declared target is the basis.
     """
     text = (raw or "").strip()
-    m = _TOTAL_LINE.search(text)
-    if not m:
+    # Mirror the judge's anchoring: LAST TOTAL, not first (see correction/judge.py).
+    ms = list(_TOTAL_LINE.finditer(text))
+    if not ms:
         return (declared or ladder), "no_total_in_raw"
-    total = float(m.group(1))
+    total = float(ms[-1].group(1))
     arith = item_arithmetic(text)
     if arith is not None and abs(total - arith) <= 0.51:
         return ladder, "ladder_reconciled"

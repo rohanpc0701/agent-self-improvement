@@ -126,7 +126,17 @@ def parse_judge_output(raw: str, *, max_points: float) -> dict[str, Any]:
         bonuses.append(f"B{m.group(1)}")
         bonus_points += float(m.group(2))
 
-    total_m = _TOTAL_LINE.search(text)
+    # LAST match, not first: the prompt contract says TOTAL must be the final non-empty
+    # line, and the judge is asked to quote evidence from an untrusted answer — so an
+    # echoed line-start "Total: 95" earlier in the output must not be read as the grade.
+    total_matches = list(_TOTAL_LINE.finditer(text))
+    total_m = total_matches[-1] if total_matches else None
+    if len(total_matches) > 1:
+        vals = {float(m.group(1)) for m in total_matches}
+        if len(vals) > 1:
+            raise JudgeParseError(
+                f"ambiguous grade: {len(total_matches)} TOTAL lines disagree ({sorted(vals)})"
+            )
     if not total_m:
         # No reconstruct-from-items fallback: a truncated grade (judge cut off at
         # max_tokens) yields a PARTIAL item list, and summing it silently deflates
@@ -162,19 +172,21 @@ def _judge_max_tokens() -> int:
 
 
 def _judge_client() -> OpenAI:
-    key = (
-        os.environ.get("JUDGE_API_KEY")
-        or os.environ.get("PRIME_API_KEY")
-        or os.environ.get("OPENROUTER_API_KEY")
-        or ""
-    ).strip()
     base = (
         os.environ.get("JUDGE_BASE_URL")
         or os.environ.get("AGENT_BASE_URL")
         or _PRIME_BASE
     ).strip()
-    if not key:
-        raise RuntimeError("JUDGE_API_KEY or PRIME_API_KEY required for grading")
+    # Key and base must be resolved as one unit. Independent fallback chains let one
+    # provider's key be sent as a bearer token to a different provider's host — a live
+    # credential handed to a third party, who logs the failed auth. JUDGE_API_KEY is
+    # honoured only when JUDGE_BASE_URL pins the host alongside it.
+    from correction.provider import key_for_base
+
+    override = (os.environ.get("JUDGE_API_KEY") or "").strip() or None
+    if override and not (os.environ.get("JUDGE_BASE_URL") or "").strip():
+        override = None
+    key = key_for_base(base, override=override)
     kwargs: dict = {
         "api_key": key,
         "base_url": base,
@@ -210,13 +222,17 @@ def _build_judge_messages(question: str, rubric: str, answer: str) -> list[dict]
         "Output MUST follow the required format exactly — no markdown fences, no preamble. "
         "Always end with a line of the form TOTAL: <number>."
     )
+    # The answer is untrusted model output spliced between literal delimiters, so strip
+    # any delimiter it contains — otherwise it could close the tag and continue in what
+    # the system prompt treats as the operator region.
+    safe_answer = re.sub(r"</?student_answer\b[^>]*>", "[tag stripped]", answer or "", flags=re.I)
     user = (
         "OFFICIAL RUBRIC (verbatim):\n"
         f"{rubric}\n\n"
         "QUESTION:\n"
         f"{question}\n\n"
         "<student_answer>\n"
-        f"{answer}\n"
+        f"{safe_answer}\n"
         "</student_answer>\n\n"
         f"{_FORMAT_BLOCK}\n"
         "Include every R-item from the rubric. Award only listed tier values. "

@@ -56,6 +56,45 @@ def _prime_client(api_key: str, base_url: str = _PRIME_BASE) -> OpenAI:
     return OpenAI(**kwargs)
 
 
+class CredentialHostMismatch(RuntimeError):
+    """No credential is configured for the host a client was pointed at."""
+
+
+def key_for_base(base_url: str, *, override: str | None = None) -> str:
+    """The credential that belongs to THIS host — never a fallback from another one.
+
+    Resolving key and base independently lets provider A's key be sent as a bearer
+    token to provider B, which hands a live credential to a third party. Derive the
+    key from the host instead, and fail loudly when none is configured.
+
+    `override` (e.g. JUDGE_API_KEY) is honoured only when the caller also pinned the
+    matching base URL, so it cannot silently retarget.
+    """
+    b = (base_url or "").lower()
+    if override:
+        return override
+    if "openrouter.ai" in b:
+        key = os.environ.get("OPENROUTER_API_KEY")
+        host = "openrouter.ai (OPENROUTER_API_KEY)"
+    elif "pinference" in b or "primeintellect" in b:
+        key = os.environ.get("PRIME_API_KEY") or os.environ.get("PRIME_INTELLECT_API_KEY")
+        host = "Prime Intellect (PRIME_API_KEY)"
+    elif "minimax" in b:
+        key = os.environ.get("MINIMAX_API_KEY")
+        host = "MiniMax (MINIMAX_API_KEY)"
+    else:
+        raise CredentialHostMismatch(
+            f"No credential mapping for base URL {base_url!r}. Set the matching "
+            "*_BASE_URL and *_API_KEY together rather than relying on a fallback."
+        )
+    if not key:
+        raise CredentialHostMismatch(
+            f"Base URL points at {host} but that key is not set. Refusing to fall back "
+            "to another provider's key — that would send a live credential to a third party."
+        )
+    return key
+
+
 def teacher_client_and_model() -> tuple[OpenAI, str]:
     """Return (client, model_id) for teacher generation.
 
