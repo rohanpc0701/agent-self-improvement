@@ -1,6 +1,44 @@
-# Context save — 2026-07-30 (post-Q1)
+# Context save — 2026-07-30 (post-Q1), updated 2026-08-01
 
 Supersedes `docs/CODEX_BRAINSTORM_CONTEXT.md` as the current-state doc. Read this first.
+
+## Session addendum — 2026-08-01 (repo hygiene + security)
+
+No experiments run, no API spend. Three pieces of work after the Q1 result:
+
+**1. The orientation layer was retired.** `CLAUDE.md`, `AGENTS.md`, `harness/CLAUDE.md`,
+`correction/CLAUDE.md`, five `.claude/rules/*.md`, `plan.md`, `STRUCTURE.md` and `README.md`
+all still described the Spider text-to-SQL drift demo this repo left on 2026-07-21 —
+`AGENTS.md` even imported rules from a `.Codex/rules/` path that never existed. Since
+`CLAUDE.md` auto-loads every session, they were spending context to misdirect. `CLAUDE.md`
+and `README.md` were rewritten to the current project; `AGENTS.md` is now a pointer (two
+files describing one project is how this drifted); the other nine were deleted.
+
+**2. The test suite was red and nobody knew.** Recent verification had only run
+`correction/tests` (49 passing) while the root `tests/` had **8 failures**. Seven were
+tests asserting behavior D2/D4 deliberately changed — including two encoding the exact
+score-deflation bug D2 removed. The eighth was real: the rubric-firewall test passed alone
+and failed in-suite, because `scripts/finance_baselines.py::generate_for_ids` writes
+`AGENT_USE_EXAMPLES=0` with a raw `os.environ` assignment, leaving examples disabled for
+the rest of the session and turning that test into one that **cannot fail**. `conftest.py`
+now pops that variable. **217 tests pass.**
+
+**3. Security tooling + a 13-agent audit.** Added `scripts/secret_scan.py` (pre-commit +
+CI), `.github/workflows/security.yml` (secret scan, `pip-audit`, `bandit`, Monday cron),
+and protected `main` on GitHub. The audit then found the scanner **blind to 2 of 3 live
+key shapes**: a leading `\b` before the credential keyword, and `_` is a word character, so
+no prefixed name like `MINIMAX_API_KEY=` could ever match — while `.gitignore`'s bare
+`.env` left `.env.bak` committable. Together, `cp .env .env.bak && git commit` would have
+pushed two live keys with both layers reporting "clean". Fixed and verified against the
+real `.env` in five contexts. Also fixed: cross-provider credential disclosure in
+`_judge_client()` (key and base resolved from independent chains — now
+`provider.key_for_base()` derives the key from the host), `TOTAL` first-match parsing (now
+last-match, raises on disagreement; **published Q1 numbers unchanged**), and
+`<student_answer>` delimiter stripping.
+
+Verified clean: no credential in the working tree or in 181 commits on any branch; no CI
+secrets; no inbound path. **Still open — the DigitalOcean SSH key was pasted into a chat
+transcript and must be rotated.** Details in `memory/repo-security-tooling.md`.
 
 ## One paragraph
 
