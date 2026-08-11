@@ -1,4 +1,4 @@
-.PHONY: demo demo-continuous gif test install
+.PHONY: demo demo-continuous test install
 
 install:
 	pip3 install -r requirements.txt
@@ -8,9 +8,6 @@ demo:
 
 demo-continuous:
 	VIEWER_LOG=fixtures/demo_continuous.jsonl bash scripts/demo.sh
-
-gif:
-	python3 scripts/generate_demo_gif.py
 
 test:
 	python3 -m pytest -q
