@@ -4,8 +4,7 @@ Research code for a simple question: can a **stronger teacher model** help a **c
 
 We tried several answers. Some demos look good. The honest held-out story is thinner. This README says what the repo is, what we measured, and how to run it.
 
-Public mirror: [rohanpc0701/Chiron](https://github.com/rohanpc0701/Chiron)  
-(Original remote: `agent-self-improvement` — same history.)
+Public repo: [rohanpc0701/Chiron](https://github.com/rohanpc0701/Chiron)
 
 ---
 
