@@ -2,12 +2,6 @@
 
 [![CI](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml/badge.svg)](https://github.com/rohanpc0701/agent-self-improvement/actions/workflows/ci.yml)
 
-Open-source harness for **runtime self-correction** of verifiable agents: detect accuracy drift, repair failures with a stronger teacher, store `(trap, fix)` rules in a knowledge graph, and re-run with learned context — no fine-tuning, no human in the loop.
-
-Domains plug in through a `TaskAdapter` (`coding`, `spider`, `gsm8k`). The primary measured domain is **hard coding** (unit-test verified Python).
-
-![Recovery curve from recorded telemetry](docs/demo.gif)
-
 ---
 
 ## Results
